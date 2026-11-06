@@ -1,0 +1,6 @@
+// expect-gas: xor ebx, ebx
+fn main() -> reg i32 {
+    reg k: i32 = 99
+    drop(k)
+    return(0)
+}
