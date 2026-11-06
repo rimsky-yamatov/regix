@@ -1,0 +1,6 @@
+// expect-gas: mov DWORD PTR [r10], 0
+fn main() -> reg i32 {
+    heap k: i32 = 99
+    drop(k)
+    return(0)
+}
