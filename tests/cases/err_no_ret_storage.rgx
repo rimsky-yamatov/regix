@@ -1,0 +1,4 @@
+// expect-error: return type needs a storage class
+fn main() -> i32 {
+    return(0)
+}
