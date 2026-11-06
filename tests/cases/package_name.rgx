@@ -1,0 +1,12 @@
+// expect-exit: 9
+package com::example::demo;
+
+import std::io;
+
+fn sq(reg x: i32) -> reg i32 {
+    return(x * x)
+}
+
+fn main() -> reg i32 {
+    return(com::example::demo::sq(3))
+}
