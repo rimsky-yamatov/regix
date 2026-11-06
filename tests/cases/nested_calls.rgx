@@ -1,0 +1,12 @@
+// expect-exit: 30
+fn add(reg a: i32, reg b: i32) -> reg i32 {
+    return(a + b)
+}
+
+fn dbl(reg x: i32) -> reg i32 {
+    return(x * 2)
+}
+
+fn main() -> reg i32 {
+    return(add(dbl(add(1, 2)), dbl(dbl(6))))
+}
