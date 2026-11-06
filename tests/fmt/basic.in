@@ -1,0 +1,9 @@
+fn  f() -> void {
+reg x: i32 = 1   
+
+
+
+  if (x) {
+x = 2 // keep {
+}
+}
