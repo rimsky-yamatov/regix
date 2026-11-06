@@ -1,0 +1,6 @@
+// expect-gas: mov DWORD PTR [rbp-8], 0
+fn main() -> reg i32 {
+    stack k: i32 = 99
+    drop(k)
+    return(0)
+}
