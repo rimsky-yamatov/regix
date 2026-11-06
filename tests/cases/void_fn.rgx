@@ -1,0 +1,9 @@
+// expect-exit: 0
+fn noop(reg x: i32) -> void {
+    reg y: i32 = x + 1
+    return
+}
+
+fn main() -> void {
+    noop(1)
+}
