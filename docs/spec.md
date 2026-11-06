@@ -56,3 +56,10 @@ Java-style packages with `::` as separator:
     import std::io;
 
 Only imported names are usable. `pub` marks items visible outside the package.
+
+## Implementation status (v0.1)
+
+Implemented: `i32`, `reg` variables, `if`/`else`, `while`, assignment,
+calls, guaranteed tail calls, `package`/`import` parsing.
+Not yet: `stack`, `heap`, `drop`, structs, arrays, slices, imports resolution,
+`main` arguments, standard library.
