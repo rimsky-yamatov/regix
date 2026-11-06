@@ -1,0 +1,11 @@
+// expect-exit: 120
+fn fact(reg n: i32) -> reg i32 {
+    if (n < 2) {
+        return(1)
+    }
+    return(n * fact(n - 1))
+}
+
+fn main() -> reg i32 {
+    return(fact(5))
+}
