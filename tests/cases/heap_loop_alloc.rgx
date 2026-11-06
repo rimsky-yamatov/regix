@@ -1,0 +1,10 @@
+// expect-exit: 100
+// Each iteration allocates and releases at scope end.
+fn main() -> reg i32 {
+    reg i: i32 = 0
+    while (i < 100000) {
+        heap t: i32 = i
+        i = i + 1
+    }
+    return(100)
+}
