@@ -1,0 +1,7 @@
+// expect-error: already dropped
+fn main() -> reg i32 {
+    stack x: i32 = 1
+    drop(x)
+    drop(x)
+    return(0)
+}
