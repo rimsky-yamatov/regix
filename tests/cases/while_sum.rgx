@@ -1,0 +1,10 @@
+// expect-exit: 55
+fn main() -> reg i32 {
+    reg i: i32 = 1
+    reg sum: i32 = 0
+    while (i <= 10) {
+        sum = sum + i
+        i = i + 1
+    }
+    return(sum)
+}
