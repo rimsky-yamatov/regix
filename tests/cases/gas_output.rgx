@@ -1,0 +1,4 @@
+// expect-gas: .intel_syntax noprefix
+fn main() -> reg i32 {
+    return(1)
+}
