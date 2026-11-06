@@ -1,0 +1,8 @@
+// expect-error: takes 1 argument(s) but 2 given
+fn f(reg a: i32) -> reg i32 {
+    return(a)
+}
+
+fn main() -> reg i32 {
+    return(f(1, 2))
+}
