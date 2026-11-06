@@ -1,0 +1,8 @@
+// expect-error: returns void
+fn f() -> void {
+}
+
+fn main() -> reg i32 {
+    reg x: i32 = f()
+    return(x)
+}
