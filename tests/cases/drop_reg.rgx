@@ -1,0 +1,6 @@
+// expect-exit: 0
+fn main() -> reg i32 {
+    reg key: i32 = 99
+    drop(key)
+    return(0)
+}
