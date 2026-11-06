@@ -1,5 +1,8 @@
 // expect-error: not implemented yet
-fn main() -> reg i32 {
-    stack x: i32 = 1
+fn f(stack x: i32) -> reg i32 {
     return(x)
+}
+
+fn main() -> reg i32 {
+    return(f(1))
 }
