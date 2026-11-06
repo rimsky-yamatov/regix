@@ -1,0 +1,3 @@
+// expect-error: no 'main' function
+fn f() -> void {
+}
