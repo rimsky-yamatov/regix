@@ -1,0 +1,10 @@
+// expect-error: dropped inside a loop
+fn main() -> reg i32 {
+    stack s: i32 = 1
+    reg i: i32 = 0
+    while (i < 2) {
+        drop(s)
+        i = i + 1
+    }
+    return(0)
+}
