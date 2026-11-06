@@ -1,0 +1,5 @@
+// expect-exit: 13
+fn main() -> reg i32 {
+    reg a: i32 = 2 + 3 * 4 - 1
+    return(a)
+}
