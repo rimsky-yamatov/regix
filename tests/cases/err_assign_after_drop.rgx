@@ -1,0 +1,7 @@
+// expect-error: assignment to dropped variable 'x'
+fn main() -> reg i32 {
+    reg x: i32 = 1
+    drop(x)
+    x = 2
+    return(0)
+}
