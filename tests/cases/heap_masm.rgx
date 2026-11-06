@@ -1,0 +1,5 @@
+// expect-masm: HeapAlloc
+fn main() -> reg i32 {
+    heap k: i32 = 1
+    return(k)
+}
