@@ -1,0 +1,5 @@
+// expect-error: undefined variable 'q'
+fn main() -> reg i32 {
+    drop(q)
+    return(0)
+}
