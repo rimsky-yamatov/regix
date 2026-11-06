@@ -41,3 +41,18 @@ Parameter storage classes and the return type are mandatory:
 
 `main` is `fn main() -> reg i32`, `fn main() -> void`, or takes
 `stack args: &[&[u8]]`.
+
+## Structs and arrays
+
+C-style structs. A field without a storage class is stored inline in its
+parent; a `heap` field owns a separate heap block. Strings are fixed-length
+arrays (`heap s: [u8; 5] = "Hello"`) with borrowed slices `&[u8]`.
+
+## Packages
+
+Java-style packages with `::` as separator:
+
+    package com::example::project;
+    import std::io;
+
+Only imported names are usable. `pub` marks items visible outside the package.
