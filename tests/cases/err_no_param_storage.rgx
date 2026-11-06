@@ -1,0 +1,8 @@
+// expect-error: needs a storage class
+fn f(n: i32) -> reg i32 {
+    return(n)
+}
+
+fn main() -> reg i32 {
+    return(f(1))
+}
