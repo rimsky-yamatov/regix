@@ -1,0 +1,9 @@
+// expect-masm: sub rsp, 32
+fn g(reg x: i32) -> reg i32 {
+    return(x)
+}
+
+fn main() -> reg i32 {
+    reg a: i32 = g(1)
+    return(a)
+}
