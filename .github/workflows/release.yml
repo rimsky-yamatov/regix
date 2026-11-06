@@ -1,0 +1,72 @@
+name: Release
+
+# Pushing a tag such as v0.1.0 builds Linux and Windows binaries and
+# publishes them as a GitHub release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and test
+        run: |
+          make
+          make test
+      - name: Package
+        run: |
+          name="regix-${GITHUB_REF_NAME}-linux-x64"
+          mkdir -p "dist/$name"
+          cp build/rgc build/rgfmt build/rgpm README.md "dist/$name/"
+          cp -r docs "dist/$name/docs"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64
+          path: dist/*.tar.gz
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up MSVC (ml64, link, cl)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Build
+        shell: cmd
+        run: scripts\build.bat
+      - name: Test
+        shell: cmd
+        run: scripts\test.bat
+      - name: Package
+        shell: pwsh
+        run: |
+          $name = "regix-$env:GITHUB_REF_NAME-windows-x64"
+          New-Item -ItemType Directory -Path "dist/$name" -Force | Out-Null
+          Copy-Item build/rgc.exe, build/rgfmt.exe, build/rgpm.exe, README.md "dist/$name/"
+          Copy-Item docs "dist/$name/docs" -Recurse
+          Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: dist/*.zip
+
+  release:
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
