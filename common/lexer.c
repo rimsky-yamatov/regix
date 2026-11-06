@@ -43,6 +43,7 @@ const char *tok_name(TokKind k)
     case T_SEMI: return "';'";
     case T_ARROW: return "'->'";
     case T_ASSIGN: return "'='";
+    case T_DOT: return "'.'";
     case T_PLUS: return "'+'";
     case T_MINUS: return "'-'";
     case T_STAR: return "'*'";
@@ -151,6 +152,7 @@ Token *lex(const char *file, const char *src, size_t *count)
             case '}': tk.kind = T_RBRACE; break;
             case ',': tk.kind = T_COMMA; break;
             case ';': tk.kind = T_SEMI; break;
+            case '.': tk.kind = T_DOT; break;
             case '+': tk.kind = T_PLUS; break;
             case '*': tk.kind = T_STAR; break;
             case ':':
