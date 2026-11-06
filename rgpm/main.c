@@ -36,10 +36,12 @@ int main(int argc, char **argv)
     }
     if (strcmp(argv[1], "build") == 0) {
 #ifdef _WIN32
-        system("if not exist build mkdir build");
+        if (system("if not exist build mkdir build") != 0)
+            return 1;
         return system("rgc src\\main.rgx -o build\\main") == 0 ? 0 : 1;
 #else
-        system("mkdir -p build");
+        if (system("mkdir -p build") != 0)
+            return 1;
         return system("rgc src/main.rgx -o build/main") == 0 ? 0 : 1;
 #endif
     }
