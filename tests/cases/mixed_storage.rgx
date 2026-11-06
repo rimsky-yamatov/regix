@@ -1,0 +1,7 @@
+// expect-exit: 21
+fn main() -> reg i32 {
+    reg r: i32 = 1
+    stack s: i32 = 2
+    heap h: i32 = 3
+    return(r + s * 10 + h * 0)
+}
