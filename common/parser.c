@@ -252,6 +252,13 @@ static Stmt *parse_stmt(Parser *p)
         s = mk_stmt(S_BLOCK, t);
         s->then_b = parse_block(p);
         return s;
+    } else if (t->kind == T_IDENT && t->len == 4 && memcmp(t->text, "drop", 4) == 0 &&
+               peek1(p)->kind == T_LPAREN) {
+        advance(p);
+        advance(p);
+        s = mk_stmt(S_DROP, t);
+        s->name = ident_text(expect(p, T_IDENT, "variable name"));
+        expect(p, T_RPAREN, "')'");
     } else if (t->kind == T_IDENT && peek1(p)->kind == T_ASSIGN) {
         s = mk_stmt(S_ASSIGN, t);
         s->name = ident_text(advance(p));
