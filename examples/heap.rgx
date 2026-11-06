@@ -1,0 +1,8 @@
+fn main() -> reg i32 {
+    reg r: i32 = 1
+    stack s: i32 = 2
+    heap h: i32 = 40
+    reg sum: i32 = r + s + h
+    drop(h)       // zero-filled and freed; h can no longer be used
+    return(sum)   // 43
+}
