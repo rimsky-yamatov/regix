@@ -1,0 +1,11 @@
+// expect-exit: 1
+fn main() -> reg i32 {
+    heap h: i32 = 1
+    reg c: i32 = 1
+    if (c) {
+        drop(h)
+    } else {
+        drop(h)
+    }
+    return(1)
+}
