@@ -1,0 +1,6 @@
+// expect-exit: 12
+fn main() -> reg i32 {
+    stack a: i32 = 5
+    stack b: i32 = 7
+    return(a + b)
+}
