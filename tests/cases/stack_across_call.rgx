@@ -1,0 +1,11 @@
+// expect-exit: 26
+fn sq(reg x: i32) -> reg i32 {
+    return(x * x)
+}
+
+fn main() -> reg i32 {
+    stack a: i32 = 5
+    stack b: i32 = 1
+    reg r: i32 = sq(a) + b
+    return(r)
+}
