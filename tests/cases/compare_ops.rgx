@@ -1,0 +1,12 @@
+// expect-exit: 6
+fn main() -> reg i32 {
+    reg n: i32 = 0
+    if (1 < 2) { n = n + 1 }
+    if (2 > 1) { n = n + 1 }
+    if (2 <= 2) { n = n + 1 }
+    if (2 >= 2) { n = n + 1 }
+    if (3 == 3) { n = n + 1 }
+    if (3 != 4) { n = n + 1 }
+    if (3 != 3) { n = n + 100 }
+    return(n)
+}
