@@ -59,7 +59,23 @@ Only imported names are usable. `pub` marks items visible outside the package.
 
 ## Implementation status (v0.1)
 
-Implemented: `i32`, `reg` variables, `if`/`else`, `while`, assignment,
-calls, guaranteed tail calls, `package`/`import` parsing.
-Not yet: `stack`, `heap`, `drop`, structs, arrays, slices, imports resolution,
-`main` arguments, standard library.
+Implemented:
+
+* `i32`, `reg` / `stack` / `heap` local variables, `if`/`else`, `while`,
+  assignment, calls, guaranteed tail calls, `package`/`import` parsing.
+* `stack` variables live in 8-byte frame slots below `rbp`.
+* `heap` variables hold a pointer in a frame slot. The value is allocated
+  by a tiny runtime (`mmap` on Linux, `HeapAlloc` on Windows) and released at
+  scope end, before every `return`, and before a tail call jumps away.
+* `drop(x)` zero-fills and releases (`xor` for `reg`, a zero store for
+  `stack`, zero store plus free for `heap`). Use after drop, double drop, and
+  dropping in only one branch of an `if` or inside a loop are compile errors.
+  A branch that ends in `return` does not count for the merge rule.
+
+Known limits:
+
+* Each heap value currently takes a whole page on Linux (`mmap`/`munmap`).
+  Fine for correctness, not for performance; a real allocator comes later.
+* `stack` and `heap` parameters and return values are not implemented yet.
+* Not yet: structs, arrays, slices, import resolution, `main` arguments,
+  standard library.
