@@ -1,0 +1,6 @@
+// expect-error: use of dropped variable 'x'
+fn main() -> reg i32 {
+    heap x: i32 = 1
+    drop(x)
+    return(x)
+}
