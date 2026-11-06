@@ -1,0 +1,13 @@
+// expect-exit: 50
+// Heap values are released before a tail call jumps away.
+fn go(reg n: i32, reg acc: i32) -> reg i32 {
+    heap t: i32 = n
+    if (n == 0) {
+        return(acc)
+    }
+    return(go(n - 1, acc + 1))
+}
+
+fn main() -> reg i32 {
+    return(go(50, 0))
+}
