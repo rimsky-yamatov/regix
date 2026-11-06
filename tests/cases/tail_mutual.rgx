@@ -1,0 +1,15 @@
+// expect-exit: 1
+// A million tail calls must not overflow the stack: tail calls are jumps.
+fn is_even(reg n: i32) -> reg i32 {
+    if (n == 0) { return(1) }
+    return(is_odd(n - 1))
+}
+
+fn is_odd(reg n: i32) -> reg i32 {
+    if (n == 0) { return(0) }
+    return(is_even(n - 1))
+}
+
+fn main() -> reg i32 {
+    return(is_even(1000000))
+}
