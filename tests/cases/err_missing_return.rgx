@@ -1,0 +1,10 @@
+// expect-error: may reach its end without returning
+fn f(reg x: i32) -> reg i32 {
+    if (x > 0) {
+        return(1)
+    }
+}
+
+fn main() -> reg i32 {
+    return(f(1))
+}
