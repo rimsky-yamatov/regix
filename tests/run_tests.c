@@ -3,7 +3,7 @@
  *
  *   run_tests <rgc> <cases-dir> [<rgfmt> <fmt-dir>]
  *
- * Each cases/*.rgx file carries directives in `//` comments:
+ * Each .rgx file in the cases dir carries directives in `//` comments:
  *   // expect-exit: N       compile, run, and require exit code N
  *   // expect-error: TEXT   compilation must fail and print TEXT
  *   // expect-gas: TEXT     `--target linux-x64 -S` output must contain TEXT
