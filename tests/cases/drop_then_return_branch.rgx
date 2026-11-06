@@ -1,0 +1,10 @@
+// expect-exit: 2
+fn main() -> reg i32 {
+    stack s: i32 = 2
+    reg c: i32 = 0
+    if (c) {
+        drop(s)
+        return(0)
+    }
+    return(s)
+}
