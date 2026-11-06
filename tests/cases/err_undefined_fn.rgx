@@ -1,0 +1,4 @@
+// expect-error: undefined function 'nope'
+fn main() -> reg i32 {
+    return(nope(1))
+}
