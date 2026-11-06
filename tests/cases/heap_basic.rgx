@@ -1,0 +1,5 @@
+// expect-exit: 10
+fn main() -> reg i32 {
+    heap y: i32 = 10
+    return(y)
+}
