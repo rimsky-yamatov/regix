@@ -5,7 +5,7 @@ typedef enum { TY_VOID, TY_I32 } Ty;
 typedef enum { ST_NONE, ST_REG, ST_STACK, ST_HEAP } Storage;
 typedef enum { E_INT, E_VAR, E_NEG, E_BIN, E_CALL } ExprKind;
 typedef enum { OP_ADD, OP_SUB, OP_MUL, OP_LT, OP_GT, OP_LE, OP_GE, OP_EQ, OP_NE } BinOp;
-typedef enum { S_DECL, S_ASSIGN, S_IF, S_WHILE, S_RETURN, S_EXPR, S_BLOCK } StmtKind;
+typedef enum { S_DECL, S_ASSIGN, S_IF, S_WHILE, S_RETURN, S_EXPR, S_BLOCK, S_DROP } StmtKind;
 
 typedef struct Func Func;
 typedef struct Expr Expr;
@@ -14,6 +14,8 @@ typedef struct Stmt Stmt;
 typedef struct Block {
     Stmt **stmts;
     int n, cap;
+    Stmt **rel;      /* heap decls to release at scope end (not dropped) */
+    int nrel, relcap;
 } Block;
 
 struct Expr {
@@ -25,7 +27,8 @@ struct Expr {
     Expr *l, *r;     /* E_NEG uses l; E_BIN uses l and r */
     Expr **args;     /* E_CALL */
     int nargs, cap;
-    int reg;         /* E_VAR: register slot, set by check */
+    int reg;         /* E_VAR: register index (reg) or frame slot index (stack/heap) */
+    Storage vst;     /* E_VAR: storage class of the variable, set by check */
     Func *callee;    /* E_CALL: set by check */
 };
 
@@ -38,7 +41,9 @@ struct Stmt {
     Expr *expr;      /* init / rhs / condition / return value / expression */
     Block *then_b;   /* S_IF, S_WHILE, S_BLOCK */
     Block *else_b;   /* S_IF, may be NULL */
-    int reg;         /* S_DECL, S_ASSIGN: register slot, set by check */
+    int reg;         /* S_DECL, S_ASSIGN, S_DROP: register index or frame slot index */
+    Stmt **rel;      /* S_RETURN: live heap variables to release before leaving */
+    int nrel, relcap;
 };
 
 typedef struct {
@@ -57,7 +62,8 @@ struct Func {
     Storage ret_storage;
     Ty ret_ty;
     Block *body;
-    int nregs;       /* registers needed, set by check */
+    int nregs;       /* callee-saved registers needed, set by check */
+    int nslots;      /* 8-byte frame slots for stack/heap variables, set by check */
     int line, col;
     int is_pub;
 };
@@ -69,6 +75,7 @@ typedef struct {
     int nimports, icap;
     Func **funcs;
     int nfuncs, fcap;
+    int uses_heap;   /* set by check: emit the heap runtime */
 } Program;
 
 #endif
