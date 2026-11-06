@@ -1,0 +1,4 @@
+// expect-error: undefined variable 'zzz'
+fn main() -> reg i32 {
+    return(zzz)
+}
