@@ -1,0 +1,11 @@
+// expect-exit: 55
+fn fib(reg n: i32) -> reg i32 {
+    if (n < 2) {
+        return(n)
+    }
+    return(fib(n - 1) + fib(n - 2))
+}
+
+fn main() -> reg i32 {
+    return(fib(10))
+}
