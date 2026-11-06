@@ -1,0 +1,12 @@
+// expect-exit: 7
+fn f(reg x: i32) -> reg i32 {
+    heap h: i32 = x
+    if (x > 0) {
+        return(h + 2)
+    }
+    return(0)
+}
+
+fn main() -> reg i32 {
+    return(f(5))
+}
