@@ -1,0 +1,13 @@
+// expect-error: moved inside a loop
+fn take(heap h: i32) -> void {
+}
+
+fn main() -> reg i32 {
+    heap x: i32 = 1
+    reg i: i32 = 0
+    while (i < 2) {
+        take(x)
+        i = i + 1
+    }
+    return(0)
+}
