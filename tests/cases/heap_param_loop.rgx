@@ -1,0 +1,13 @@
+// expect-exit: 7
+fn eat(heap h: i32) -> void {
+}
+
+fn main() -> reg i32 {
+    reg i: i32 = 0
+    while (i < 50000) {
+        heap t: i32 = i
+        eat(t)
+        i = i + 1
+    }
+    return(7)
+}
