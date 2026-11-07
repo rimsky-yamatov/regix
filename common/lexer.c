@@ -44,6 +44,10 @@ const char *tok_name(TokKind k)
     case T_ARROW: return "'->'";
     case T_ASSIGN: return "'='";
     case T_DOT: return "'.'";
+    case T_LBRACKET: return "'['";
+    case T_RBRACKET: return "']'";
+    case T_AMP: return "'&'";
+    case T_STRING: return "string";
     case T_PLUS: return "'+'";
     case T_MINUS: return "'-'";
     case T_STAR: return "'*'";
@@ -142,6 +146,41 @@ Token *lex(const char *file, const char *src, size_t *count)
             tk.len = (int)(p - s);
             tk.ival = (long)v;
             col += tk.len;
+        } else if (c == '"') {
+            const char *s = p + 1;
+            char *buf = NULL;
+            size_t n2 = 0, cap2 = 0;
+            int cl = col + 1;
+            for (;;) {
+                if (*s == '\0' || *s == '\n')
+                    rgx_die(file, line, col, "unterminated string literal");
+                if (*s == '"')
+                    break;
+                char ch = *s;
+                if (ch == '\\') {
+                    s++;
+                    cl++;
+                    switch (*s) {
+                    case 'n': ch = '\n'; break;
+                    case 't': ch = '\t'; break;
+                    case 'r': ch = '\r'; break;
+                    case '0': ch = '\0'; break;
+                    case '\\': ch = '\\'; break;
+                    case '"': ch = '"'; break;
+                    default:
+                        rgx_die(file, line, cl, "unknown escape sequence in string");
+                    }
+                }
+                VEC_PUSH(buf, n2, cap2, ch);
+                s++;
+                cl++;
+            }
+            tk.kind = T_STRING;
+            tk.sval = buf ? buf : xstrdup("");
+            tk.slen = (int)n2;
+            tk.len = (int)(s + 1 - p);
+            p = s + 1;
+            col = cl + 1;
         } else {
             char d = p[1];
             tk.len = 1;
@@ -153,6 +192,9 @@ Token *lex(const char *file, const char *src, size_t *count)
             case ',': tk.kind = T_COMMA; break;
             case ';': tk.kind = T_SEMI; break;
             case '.': tk.kind = T_DOT; break;
+            case '[': tk.kind = T_LBRACKET; break;
+            case ']': tk.kind = T_RBRACKET; break;
+            case '&': tk.kind = T_AMP; break;
             case '+': tk.kind = T_PLUS; break;
             case '*': tk.kind = T_STAR; break;
             case ':':

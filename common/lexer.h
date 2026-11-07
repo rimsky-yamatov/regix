@@ -13,6 +13,7 @@ typedef enum {
     /* punctuation */
     T_LPAREN, T_RPAREN, T_LBRACE, T_RBRACE,
     T_COMMA, T_COLON, T_COLONCOLON, T_SEMI, T_ARROW, T_ASSIGN, T_DOT,
+    T_LBRACKET, T_RBRACKET, T_AMP, T_STRING,
     T_PLUS, T_MINUS, T_STAR,
     T_LT, T_GT, T_LE, T_GE, T_EQ, T_NE
 } TokKind;
@@ -23,6 +24,8 @@ typedef struct {
     const char *text; /* points into the source buffer */
     int len;
     long ival;        /* T_INT */
+    char *sval;       /* T_STRING: decoded bytes (NUL-terminated for convenience) */
+    int slen;         /* T_STRING: number of bytes */
 } Token;
 
 /* Tokenize `src`. The result ends with T_EOF. Exits on lexical errors. */
