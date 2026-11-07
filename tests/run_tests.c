@@ -6,6 +6,7 @@
  * Each .rgx file in the cases dir carries directives in `//` comments:
  *   // expect-exit: N       compile, run, and require exit code N
  *   // expect-error: TEXT   compilation must fail and print TEXT
+ *   // expect-stdout: TEXT  (with expect-exit) program output must contain TEXT
  *   // expect-gas: TEXT     `--target linux-x64 -S` output must contain TEXT
  *   // expect-masm: TEXT    `--target windows-x64 -S` output must contain TEXT
  *
@@ -147,6 +148,7 @@ static void run_case(const char *rgc, const char *dir, const char *file)
     char *err_s = directive(src, "expect-error");
     char *gas_s = directive(src, "expect-gas");
     char *masm_s = directive(src, "expect-masm");
+    char *out_s = directive(src, "expect-stdout");
     char *log = xsprintf("%s/%s.log", TMP, name);
 
     if (exit_s) {
@@ -155,10 +157,13 @@ static void run_case(const char *rgc, const char *dir, const char *file)
         if (run_cmd(cmd) != 0) {
             report(name, 0, "compilation failed (see build/tmp log)");
         } else {
-            char *rcmd = xsprintf("%s", exe);
+            char *outf = xsprintf("%s/%s.stdout", TMP, name);
+            char *rcmd = out_s ? xsprintf("%s > %s", exe, outf) : xsprintf("%s", exe);
             int rc = run_cmd(rcmd);
             int want = atoi(exit_s);
-            if (rc == want) {
+            if (rc == want && out_s && !file_contains(outf, out_s)) {
+                report(name, 0, "stdout does not contain the expected text");
+            } else if (rc == want) {
                 report(name, 1, "");
             } else {
                 char *why = xsprintf("exit code %d, expected %d", rc, want);
