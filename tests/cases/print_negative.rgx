@@ -1,0 +1,8 @@
+// expect-exit: 0
+// expect-stdout: -2147483647
+import std::io;
+
+fn main() -> void {
+    std::io::print_i32(-2147483647)
+    std::io::print_i32(0)
+}
