@@ -12,10 +12,16 @@ typedef struct {
 } Parser;
 
 static Token *cur(Parser *p) { return &p->t[p->pos]; }
-static Token *peek1(Parser *p)
+
+/* Token `k` positions ahead, or EOF if past the end. */
+static Token *tok_at(Parser *p, size_t k)
 {
-    return cur(p)->kind == T_EOF ? cur(p) : &p->t[p->pos + 1];
+    size_t i = p->pos;
+    while (k-- > 0 && p->t[i].kind != T_EOF)
+        i++;
+    return &p->t[i];
 }
+static Token *peek1(Parser *p) { return tok_at(p, 1); }
 static int at(Parser *p, TokKind k) { return cur(p)->kind == k; }
 
 static Token *advance(Parser *p)
@@ -50,8 +56,7 @@ static char *parse_qname(Parser *p)
     while (at(p, T_COLONCOLON) && peek1(p)->kind == T_IDENT) {
         advance(p);
         char *part = ident_text(advance(p));
-        char *n = xsprintf("%s::%s", s, part);
-        s = n;
+        s = xsprintf("%s::%s", s, part);
     }
     return s;
 }
@@ -66,15 +71,16 @@ static Storage accept_storage(Parser *p)
     }
 }
 
-static Ty parse_type(Parser *p, int allow_void)
+/* i32, void (if allowed) or the name of a struct (returned in *sname). */
+static Ty parse_type(Parser *p, int allow_void, char **sname)
 {
     Token *t = expect(p, T_IDENT, "type");
     if (t->len == 3 && memcmp(t->text, "i32", 3) == 0)
         return TY_I32;
     if (allow_void && t->len == 4 && memcmp(t->text, "void", 4) == 0)
         return TY_VOID;
-    rgx_die(p->file, t->line, t->col, "unsupported type '%.*s' (v0.1 supports only i32)",
-            t->len, t->text);
+    *sname = ident_text(t);
+    return TY_STRUCT;
 }
 
 /* ---- expressions ---- */
@@ -113,8 +119,33 @@ static Expr *parse_primary(Parser *p)
             expect(p, T_RPAREN, "')'");
             return e;
         }
+        if (at(p, T_LBRACE) && tok_at(p, 1)->kind == T_IDENT && tok_at(p, 2)->kind == T_COLON) {
+            /* struct literal: Name { field: expr, ... } */
+            Expr *e = mk_expr(E_STRUCTLIT, t);
+            e->name = name;
+            advance(p);
+            do {
+                if (at(p, T_RBRACE))
+                    break;
+                char *fname = ident_text(expect(p, T_IDENT, "field name"));
+                expect(p, T_COLON, "':'");
+                Expr *v = parse_expr(p);
+                VEC_PUSH(e->fnames, e->nfn, e->fncap, fname);
+                VEC_PUSH(e->args, e->nargs, e->cap, v);
+            } while (accept(p, T_COMMA));
+            expect(p, T_RBRACE, "'}'");
+            return e;
+        }
         Expr *e = mk_expr(E_VAR, t);
         e->name = name;
+        while (at(p, T_DOT)) {
+            Token *dt = advance(p);
+            Token *ft = expect(p, T_IDENT, "field name");
+            Expr *f = mk_expr(E_FIELD, dt);
+            f->l = e;
+            f->name = ident_text(ft);
+            e = f;
+        }
         return e;
     }
     if (t->kind == T_LPAREN) {
@@ -219,6 +250,17 @@ static Stmt *parse_if(Parser *p)
     return s;
 }
 
+/* IDENT ('.' IDENT)+ '=' */
+static int is_field_assign(Parser *p)
+{
+    size_t k = 1;
+    if (tok_at(p, k)->kind != T_DOT)
+        return 0;
+    while (tok_at(p, k)->kind == T_DOT && tok_at(p, k + 1)->kind == T_IDENT)
+        k += 2;
+    return tok_at(p, k)->kind == T_ASSIGN;
+}
+
 static Stmt *parse_stmt(Parser *p)
 {
     Token *t = cur(p);
@@ -230,7 +272,7 @@ static Stmt *parse_stmt(Parser *p)
         s->storage = st;
         s->name = ident_text(expect(p, T_IDENT, "variable name"));
         expect(p, T_COLON, "':'");
-        s->ty = parse_type(p, 0);
+        s->ty = parse_type(p, 0, &s->tyname);
         if (accept(p, T_ASSIGN))
             s->expr = parse_expr(p);
     } else if (t->kind == T_KW_IF) {
@@ -263,6 +305,11 @@ static Stmt *parse_stmt(Parser *p)
         s = mk_stmt(S_ASSIGN, t);
         s->name = ident_text(advance(p));
         advance(p);
+        s->expr = parse_expr(p);
+    } else if (t->kind == T_IDENT && is_field_assign(p)) {
+        s = mk_stmt(S_FASSIGN, t);
+        s->lhs = parse_primary(p);
+        expect(p, T_ASSIGN, "'='");
         s->expr = parse_expr(p);
     } else {
         s = mk_stmt(S_EXPR, t);
@@ -316,7 +363,7 @@ static Func *parse_func(Parser *p, int is_pub)
             }
             pr.name = ident_text(expect(p, T_IDENT, "parameter name"));
             expect(p, T_COLON, "':'");
-            pr.ty = parse_type(p, 0);
+            pr.ty = parse_type(p, 0, &pr.tyname);
             VEC_PUSH(f->params, f->nparams, f->pcap, pr);
         } while (accept(p, T_COMMA));
     }
@@ -337,10 +384,42 @@ static Func *parse_func(Parser *p, int is_pub)
         if (f->ret_storage == ST_NONE)
             rgx_die(p->file, rt->line, rt->col,
                     "return type needs a storage class (reg, stack or heap), e.g. '-> reg i32'");
-        f->ret_ty = parse_type(p, 0);
+        f->ret_ty = parse_type(p, 0, &f->ret_tyname);
     }
     f->body = parse_block(p);
     return f;
+}
+
+static StructDef *parse_struct(Parser *p, int is_pub)
+{
+    Token *st = expect(p, T_KW_STRUCT, "'struct'");
+    StructDef *sd = xcalloc(sizeof *sd);
+    sd->line = st->line;
+    sd->col = st->col;
+    sd->is_pub = is_pub;
+    sd->name = ident_text(expect(p, T_IDENT, "struct name"));
+    expect(p, T_LBRACE, "'{'");
+    while (!at(p, T_RBRACE)) {
+        if (at(p, T_EOF))
+            rgx_die(p->file, cur(p)->line, cur(p)->col, "expected '}', found end of file");
+        Token *ft = cur(p);
+        if (accept_storage(p) != ST_NONE)
+            rgx_die(p->file, ft->line, ft->col,
+                    "storage classes on struct fields are not implemented yet "
+                    "(fields are stored inline)");
+        Field f;
+        memset(&f, 0, sizeof f);
+        f.line = ft->line;
+        f.col = ft->col;
+        f.name = ident_text(expect(p, T_IDENT, "field name"));
+        expect(p, T_COLON, "':'");
+        f.ty = parse_type(p, 0, &f.tyname);
+        VEC_PUSH(sd->fields, sd->nfields, sd->fcap, f);
+        if (!accept(p, T_COMMA) && !accept(p, T_SEMI))
+            break;
+    }
+    expect(p, T_RBRACE, "'}'");
+    return sd;
 }
 
 Program *parse_program(const char *file, const char *src)
@@ -365,12 +444,17 @@ Program *parse_program(const char *file, const char *src)
     }
     while (!at(&p, T_EOF)) {
         int is_pub = accept(&p, T_KW_PUB);
-        if (!at(&p, T_KW_FN)) {
+        if (at(&p, T_KW_STRUCT)) {
+            StructDef *sd = parse_struct(&p, is_pub);
+            VEC_PUSH(prog->structs, prog->nstructs, prog->scap, sd);
+        } else if (at(&p, T_KW_FN)) {
+            Func *f = parse_func(&p, is_pub);
+            VEC_PUSH(prog->funcs, prog->nfuncs, prog->fcap, f);
+        } else {
             Token *t = cur(&p);
-            rgx_die(file, t->line, t->col, "expected 'fn', found %s", tok_name(t->kind));
+            rgx_die(file, t->line, t->col, "expected 'fn' or 'struct', found %s",
+                    tok_name(t->kind));
         }
-        Func *f = parse_func(&p, is_pub);
-        VEC_PUSH(prog->funcs, prog->nfuncs, prog->fcap, f);
     }
     return prog;
 }
