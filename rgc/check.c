@@ -12,6 +12,7 @@ typedef struct {
     int idx;      /* register index (reg) or first frame slot (stack/heap) */
     Ty ty;
     StructDef *sd;
+    ArrInfo arr;
     int size;     /* bytes of the value */
     int slots;    /* frame slots occupied (stack: whole value, heap: the pointer) */
     int dropped;  /* dropped or moved: no longer usable */
@@ -30,17 +31,10 @@ typedef struct {
 
 #define HEAP_MAX_BYTES 4096
 
-static Func builtin_print;
+enum { B_PRINT_I32, B_PRINT, B_PRINTLN, N_BUILTINS };
+static Func builtins[N_BUILTINS];
 
-static const char *storage_name(Storage s)
-{
-    switch (s) {
-    case ST_REG: return "reg";
-    case ST_STACK: return "stack";
-    case ST_HEAP: return "heap";
-    default: return "";
-    }
-}
+static int esz(Ty e) { return e == TY_I32 ? 4 : (e == TY_U8 ? 1 : 16); }
 
 static void err(Ctx *c, int line, int col, const char *fmt, ...)
 {
@@ -146,13 +140,40 @@ static Func *find_func(Ctx *c, Expr *e)
         if (strcmp(f->name, e->name) == 0 || strcmp(f->qname, e->name) == 0)
             return f;
     }
-    if (strcmp(e->name, builtin_print.qname) == 0) {
+    for (int i = 0; i < N_BUILTINS; i++) {
+        if (strcmp(e->name, builtins[i].qname) != 0)
+            continue;
         if (!imported(p, "std::io"))
             err(c, e->line, e->col, "'std::io' is not imported (add 'import std::io;')");
-        p->uses_print = 1;
-        return &builtin_print;
+        if (i == B_PRINT_I32)
+            p->uses_print = 1;
+        else if (i == B_PRINT)
+            p->uses_write = 1;
+        else
+            p->uses_writeln = 1;
+        return &builtins[i];
     }
     return NULL;
+}
+
+static void init_builtin(int i, const char *name, Ty pty)
+{
+    Func *f = &builtins[i];
+    memset(f, 0, sizeof *f);
+    f->name = (char *)name;
+    f->qname = xsprintf("std::io::%s", name);
+    f->sym = xsprintf("rgx_std_io_%s", name);
+    f->ret_ty = TY_VOID;
+    f->nparams = 1;
+    f->params = xcalloc(sizeof(Param));
+    f->params[0].name = "s";
+    f->params[0].ty = pty;
+    if (pty == TY_SLICE) {
+        f->params[0].storage = ST_STACK;
+        f->params[0].arr.elem = TY_U8;
+    } else {
+        f->params[0].storage = ST_REG;
+    }
 }
 
 /* ---- locals ---- */
@@ -165,7 +186,7 @@ static Local *lookup(Ctx *c, const char *name)
     return NULL;
 }
 
-static int declare(Ctx *c, const char *name, Storage st, Ty ty, StructDef *sd)
+static int declare(Ctx *c, const char *name, Storage st, Ty ty, StructDef *sd, const ArrInfo *ai)
 {
     Local l;
     memset(&l, 0, sizeof l);
@@ -173,8 +194,20 @@ static int declare(Ctx *c, const char *name, Storage st, Ty ty, StructDef *sd)
     l.st = st;
     l.ty = ty;
     l.sd = sd;
-    l.size = (ty == TY_STRUCT && sd) ? sd->size : 4;
-    l.slots = st == ST_STACK ? (l.size + 7) / 8 : (st == ST_HEAP ? 1 : 0);
+    if (ai)
+        l.arr = *ai;
+    if (ty == TY_ARRAY)
+        l.size = l.arr.alen * esz(l.arr.elem);
+    else if (ty == TY_SLICE)
+        l.size = 16;
+    else if (ty == TY_STRUCT && sd)
+        l.size = sd->size;
+    else
+        l.size = 4;
+    if (st == ST_STACK)
+        l.slots = ty == TY_SLICE ? 2 : (l.size + 7) / 8;
+    else if (st == ST_HEAP)
+        l.slots = 1;
     if (st == ST_REG) {
         l.idx = c->nreg++;
         if (c->nreg > c->maxreg)
@@ -215,9 +248,124 @@ static int first_diff(const char *a, const char *b, int count)
     return -1;
 }
 
+/* ---- arrays and slices ---- */
+
+/* Record on `e` which array or slice variable it refers to. */
+static void bind_seq(Expr *e, Local *l)
+{
+    e->reg = l->idx;
+    e->vst = l->st;
+    e->vty = l->ty;
+    e->ai = l->arr;
+    e->bslots = l->slots;
+}
+
+static Local *seq_local(Ctx *c, Expr *v, const char *what)
+{
+    if (v->kind != E_VAR) {
+        err(c, v->line, v->col, "%s must be a variable", what);
+        return NULL;
+    }
+    Local *l = lookup(c, v->name);
+    if (!l) {
+        err(c, v->line, v->col, "undefined variable '%s'", v->name);
+        return NULL;
+    }
+    if (l->dropped) {
+        err(c, v->line, v->col, "use of %s variable '%s'", gone(l), v->name);
+        return NULL;
+    }
+    if (l->ty != TY_ARRAY && l->ty != TY_SLICE) {
+        err(c, v->line, v->col, "'%s' is not an array or slice", v->name);
+        return NULL;
+    }
+    return l;
+}
+
+static Ty check_expr(Ctx *c, Expr *e, int allow_void);
+
+/* e is E_INDEX: validate the base and index; allow_seq permits an element that
+ * is itself a slice (only for passing as an argument). */
+static int check_index(Ctx *c, Expr *e, int allow_seq)
+{
+    Local *l = seq_local(c, e->l, "the indexed value");
+    check_expr(c, e->r, 0);
+    c->prog->uses_panic = 1;
+    if (!l)
+        return 0;
+    if (l->arr.elem == TY_SLICE && !allow_seq) {
+        err(c, e->line, e->col, "an element of '%s' is itself a slice; pass it as an argument",
+            l->name);
+        return 0;
+    }
+    bind_seq(e, l);
+    if (l->ty == TY_ARRAY && e->r->kind == E_INT && e->r->val >= l->arr.alen) {
+        err(c, e->r->line, e->r->col, "index %ld is out of bounds for an array of length %d",
+            e->r->val, l->arr.alen);
+        return 0;
+    }
+    return 1;
+}
+
+static int add_string(Program *p, const char *data, int len)
+{
+    StrLit s;
+    s.data = xstrndup(data, (size_t)len);
+    s.len = len;
+    VEC_PUSH(p->strs, p->nstrs, p->strcap, s);
+    return p->nstrs - 1;
+}
+
+/* Argument for a slice parameter. */
+static void check_slice_arg(Ctx *c, Expr *call, Expr *a, Param *p)
+{
+    if (a->kind == E_STR) {
+        if (p->arr.elem != TY_U8)
+            err(c, a->line, a->col, "a string literal is a [u8] slice");
+        a->val = add_string(c->prog, a->sval, a->slen);
+        return;
+    }
+    if (a->kind == E_VAR) {
+        /* a slice variable is passed on as it is */
+        Expr *v = xcalloc(sizeof *v);
+        *v = *a;
+        a->kind = E_ADDR;
+        a->l = v;
+    }
+    if (a->kind == E_ADDR) {
+        Local *l = seq_local(c, a->l, "a borrowed value");
+        if (!l)
+            return;
+        if (l->arr.elem != p->arr.elem || l->arr.elem2 != p->arr.elem2) {
+            err(c, a->line, a->col, "type mismatch for slice parameter '%s'", p->name);
+            return;
+        }
+        bind_seq(a, l);
+        if (l->ty == TY_ARRAY)
+            call->notail = 1; /* the array dies with this frame: no tail jump */
+        return;
+    }
+    if (a->kind == E_INDEX) {
+        if (!check_index(c, a, 1))
+            return;
+        if (a->ai.elem != TY_SLICE || a->ai.elem2 != p->arr.elem || p->arr.elem == TY_SLICE) {
+            err(c, a->line, a->col, "type mismatch for slice parameter '%s'", p->name);
+            return;
+        }
+        Expr *ix = a->r;
+        int simple = ix->kind == E_INT ||
+                     (ix->kind == E_VAR && ix->vst != ST_HEAP && ix->vst != ST_NONE);
+        if (!simple)
+            err(c, ix->line, ix->col,
+                "the index of a slice element passed as an argument must be a constant or variable");
+        return;
+    }
+    err(c, a->line, a->col, "the argument for slice parameter '%s' must be &array, a slice "
+        "variable or a string literal", p->name);
+}
+
 /* ---- expressions ---- */
 
-/* Resolve `a.b.c` to the root variable, byte offset and final type. */
 static int resolve_field(Ctx *c, Expr *e, Local **root, int *off, Ty *ty, StructDef **sd)
 {
     if (e->kind == E_VAR) {
@@ -268,8 +416,6 @@ static void annotate_field(Expr *e, Local *root, int off)
     e->foff = off;
     e->bslots = root->slots;
 }
-
-static Ty check_expr(Ctx *c, Expr *e, int allow_void);
 
 static void check_lit(Ctx *c, Expr *lit, StructDef *sd)
 {
@@ -357,11 +503,28 @@ static Ty check_expr(Ctx *c, Expr *e, int allow_void)
         if (l->ty == TY_STRUCT)
             err(c, e->line, e->col, "struct variable '%s' cannot be used as a value; "
                 "use one of its fields", e->name);
+        if (l->ty == TY_ARRAY || l->ty == TY_SLICE)
+            err(c, e->line, e->col, "'%s' cannot be used as a value; index it, use '%s.len', "
+                "or borrow it with &%s", e->name, e->name, e->name);
         e->reg = l->idx;
         e->vst = l->st;
         return TY_I32;
     }
     case E_FIELD: {
+        if (e->l->kind == E_VAR) {
+            Local *l = lookup(c, e->l->name);
+            if (l && (l->ty == TY_ARRAY || l->ty == TY_SLICE)) {
+                if (strcmp(e->name, "len") != 0) {
+                    err(c, e->line, e->col, "arrays and slices have only the field 'len'");
+                    return TY_I32;
+                }
+                if (l->dropped)
+                    err(c, e->line, e->col, "use of %s variable '%s'", gone(l), l->name);
+                e->kind = E_LEN;
+                bind_seq(e, l);
+                return TY_I32;
+            }
+        }
         Local *root;
         int off;
         Ty ty;
@@ -373,8 +536,24 @@ static Ty check_expr(Ctx *c, Expr *e, int allow_void)
         }
         return TY_I32;
     }
+    case E_INDEX:
+        check_index(c, e, 0);
+        return TY_I32;
+    case E_ADDR:
+        err(c, e->line, e->col, "a borrow (&) can only be passed as a call argument");
+        return TY_I32;
+    case E_STR:
+        err(c, e->line, e->col, "a string literal can only initialize a [u8; N] array or be "
+            "passed as a slice");
+        return TY_I32;
+    case E_ARRAYLIT:
+    case E_ARRAYREP:
+        err(c, e->line, e->col, "an array literal is only allowed as a variable initializer");
+        return TY_I32;
     case E_STRUCTLIT:
         err(c, e->line, e->col, "a struct literal is only allowed as a variable initializer");
+        return TY_I32;
+    case E_LEN:
         return TY_I32;
     case E_NEG:
         check_expr(c, e->l, 0);
@@ -388,8 +567,11 @@ static Ty check_expr(Ctx *c, Expr *e, int allow_void)
         c->heap_ok = 0;
         Func *f = find_func(c, e);
         for (int i = 0; i < e->nargs; i++) {
-            if (f && i < f->nparams && f->params[i].storage == ST_HEAP)
-                check_move_arg(c, e->args[i], &f->params[i]);
+            Param *p = (f && i < f->nparams) ? &f->params[i] : NULL;
+            if (p && p->ty == TY_SLICE)
+                check_slice_arg(c, e, e->args[i], p);
+            else if (p && p->storage == ST_HEAP)
+                check_move_arg(c, e->args[i], p);
             else
                 check_expr(c, e->args[i], 0);
         }
@@ -437,6 +619,32 @@ static int same_type(Ty a, StructDef *sa, Ty b, StructDef *sb)
     return a == b && sa == sb;
 }
 
+static void check_array_init(Ctx *c, Stmt *s)
+{
+    Expr *x = s->expr;
+    int n = s->arr.alen;
+    if (x->kind == E_ARRAYLIT) {
+        if (x->nargs != n)
+            err(c, x->line, x->col, "the array holds %d elements but the literal has %d", n,
+                x->nargs);
+        for (int i = 0; i < x->nargs; i++)
+            check_expr(c, x->args[i], 0);
+    } else if (x->kind == E_ARRAYREP) {
+        if (x->val != n)
+            err(c, x->line, x->col, "the array holds %d elements but the repeat count is %ld",
+                n, x->val);
+        check_expr(c, x->l, 0);
+    } else if (x->kind == E_STR) {
+        if (s->arr.elem != TY_U8)
+            err(c, x->line, x->col, "a string literal initializes a [u8; N] array");
+        else if (x->slen != n)
+            err(c, x->line, x->col, "the string has %d bytes but the array holds %d", x->slen, n);
+    } else {
+        err(c, x->line, x->col,
+            "an array needs an array literal [a, b], a repeat [v; N] or a string literal");
+    }
+}
+
 static void check_decl(Ctx *c, Stmt *s)
 {
     StructDef *sd = NULL;
@@ -446,15 +654,23 @@ static void check_decl(Ctx *c, Stmt *s)
             err(c, s->line, s->col, "unknown type '%s'", s->tyname);
     }
     s->sdef = sd;
-    if (s->ty == TY_STRUCT && s->storage == ST_REG)
+    if (s->ty == TY_SLICE)
+        err(c, s->line, s->col, "slice variables are not supported; slices exist as parameters");
+    if ((s->ty == TY_STRUCT || s->ty == TY_ARRAY) && s->storage == ST_REG)
         err(c, s->line, s->col,
-            "struct variable '%s' cannot be 'reg'; structs live in 'stack' or 'heap'", s->name);
-    if (s->storage == ST_HEAP && s->ty == TY_STRUCT && sd && sd->size > HEAP_MAX_BYTES)
+            "%s variable '%s' cannot be 'reg'; it lives in 'stack' or 'heap'",
+            s->ty == TY_ARRAY ? "array" : "struct", s->name);
+    int bytes = s->ty == TY_ARRAY ? s->arr.alen * esz(s->arr.elem) : (sd ? sd->size : 4);
+    if (s->storage == ST_HEAP && bytes > HEAP_MAX_BYTES)
         err(c, s->line, s->col, "heap values larger than %d bytes are not supported",
             HEAP_MAX_BYTES);
 
     if (!s->expr) {
         err(c, s->line, s->col, "variable '%s' needs an initializer", s->name);
+    } else if (s->ty == TY_ARRAY) {
+        check_array_init(c, s);
+    } else if (s->ty == TY_SLICE) {
+        /* already reported */
     } else if (s->ty == TY_STRUCT) {
         if (!sd) {
             /* already reported */
@@ -487,7 +703,7 @@ static void check_decl(Ctx *c, Stmt *s)
         check_expr(c, s->expr, 0);
     }
 
-    s->reg = declare(c, s->name, s->storage, s->ty, sd);
+    s->reg = declare(c, s->name, s->storage, s->ty, sd, &s->arr);
     Local *l = &c->loc[c->n - 1];
     s->size = l->size;
     s->bslots = l->slots;
@@ -513,8 +729,8 @@ static void check_return(Ctx *c, Stmt *s)
                     err(c, x->line, x->col, "undefined variable '%s'", x->name);
                 } else if (l->dropped) {
                     err(c, x->line, x->col, "use of %s variable '%s'", gone(l), x->name);
-                } else if (l->st != ST_HEAP) {
-                    err(c, x->line, x->col, "'%s' is not a 'heap' variable", x->name);
+                } else if (l->st != ST_HEAP || l->ty == TY_ARRAY) {
+                    err(c, x->line, x->col, "'%s' is not a movable 'heap' value", x->name);
                 } else if (!same_type(l->ty, l->sd, f->ret_ty, f->ret_sdef)) {
                     err(c, x->line, x->col, "type mismatch in return value");
                 } else {
@@ -556,8 +772,10 @@ static void check_stmt(Ctx *c, Stmt *s)
         } else {
             if (l->dropped)
                 err(c, s->line, s->col, "assignment to %s variable '%s'", gone(l), s->name);
-            if (l->ty == TY_STRUCT)
-                err(c, s->line, s->col, "cannot assign a whole struct; assign its fields");
+            if (l->ty == TY_STRUCT || l->ty == TY_ARRAY || l->ty == TY_SLICE)
+                err(c, s->line, s->col, "cannot assign a whole %s; assign its %s",
+                    l->ty == TY_STRUCT ? "struct" : "array or slice",
+                    l->ty == TY_STRUCT ? "fields" : "elements");
             s->reg = l->idx;
             s->storage = l->st;
         }
@@ -577,15 +795,23 @@ static void check_stmt(Ctx *c, Stmt *s)
         check_expr(c, s->expr, 0);
         break;
     }
+    case S_IASSIGN:
+        if (check_index(c, s->lhs, 0) && s->lhs->vty == TY_SLICE)
+            err(c, s->line, s->col, "slices are read-only; assign through the array itself");
+        check_expr(c, s->expr, 0);
+        break;
     case S_DROP: {
         Local *l = lookup(c, s->name);
         if (!l) {
             err(c, s->line, s->col, "undefined variable '%s'", s->name);
         } else if (l->dropped) {
             err(c, s->line, s->col, "variable '%s' is already %s", s->name, gone(l));
+        } else if (l->ty == TY_SLICE) {
+            err(c, s->line, s->col, "'%s' is a borrowed slice and cannot be dropped", s->name);
         } else {
             s->reg = l->idx;
             s->storage = l->st;
+            s->ty = l->ty;
             s->size = l->size;
             s->bslots = l->slots;
             l->dropped = 1;
@@ -672,9 +898,7 @@ static void check_func(Ctx *c, Func *f)
             err(c, f->line, f->col, "a function returning a struct must return 'heap %s'",
                 f->ret_tyname);
     }
-    if (f->nparams > c->abi->nargs)
-        err(c, f->line, f->col, "function '%s' has %d parameters; %s supports at most %d",
-            f->name, f->nparams, c->abi->name, c->abi->nargs);
+    int areg = 0;
     for (int i = 0; i < f->nparams; i++) {
         Param *p = &f->params[i];
         if (p->ty == TY_STRUCT) {
@@ -686,10 +910,20 @@ static void check_func(Ctx *c, Func *f)
                     "struct parameter '%s' must be 'heap' (the value moves into the callee)",
                     p->name);
         }
-        p->idx = declare(c, p->name, p->storage, p->ty, p->sdef);
+        if (p->ty == TY_ARRAY)
+            err(c, p->line, p->col,
+                "array parameter '%s' is not supported; pass a slice (&[T]) instead", p->name);
+        if (p->ty == TY_SLICE && p->storage != ST_STACK)
+            err(c, p->line, p->col, "slice parameter '%s' must be 'stack'", p->name);
+        p->areg = areg;
+        areg += p->ty == TY_SLICE ? 2 : 1;
+        p->idx = declare(c, p->name, p->storage, p->ty, p->sdef, &p->arr);
         if (p->storage == ST_HEAP)
             c->prog->uses_heap = 1;
     }
+    if (areg > c->abi->nargs)
+        err(c, f->line, f->col, "function '%s' needs %d argument registers; %s has only %d",
+            f->name, areg, c->abi->name, c->abi->nargs);
     check_block(c, f->body);
 
     /* heap parameters still owned at the end of the body are released there */
@@ -708,7 +942,12 @@ static void check_func(Ctx *c, Func *f)
             "function '%s' needs %d 'reg' variables at once but %s provides only %d "
             "callee-saved registers",
             f->name, c->maxreg, c->abi->name, c->abi->npool);
-    (void)storage_name;
+}
+
+static int is_args_param(const Param *p)
+{
+    return p->ty == TY_SLICE && p->storage == ST_STACK && p->arr.elem == TY_SLICE &&
+           p->arr.elem2 == TY_U8;
 }
 
 int check_program(Program *prog, const Abi *abi, int require_main)
@@ -719,16 +958,9 @@ int check_program(Program *prog, const Abi *abi, int require_main)
     c.abi = abi;
     int before = rgx_nerrors;
 
-    memset(&builtin_print, 0, sizeof builtin_print);
-    builtin_print.name = "print_i32";
-    builtin_print.qname = "std::io::print_i32";
-    builtin_print.sym = "rgx_std_io_print_i32";
-    builtin_print.ret_ty = TY_VOID;
-    builtin_print.nparams = 1;
-    builtin_print.params = xcalloc(sizeof(Param));
-    builtin_print.params[0].name = "n";
-    builtin_print.params[0].storage = ST_REG;
-    builtin_print.params[0].ty = TY_I32;
+    init_builtin(B_PRINT_I32, "print_i32", TY_I32);
+    init_builtin(B_PRINT, "print", TY_SLICE);
+    init_builtin(B_PRINTLN, "println", TY_SLICE);
 
     for (int i = 0; i < prog->nstructs; i++)
         for (int j = 0; j < i; j++)
@@ -751,9 +983,14 @@ int check_program(Program *prog, const Abi *abi, int require_main)
         Func *f = prog->funcs[i];
         if (f->ret_ty == TY_STRUCT)
             f->ret_sdef = find_struct(prog, f->ret_tyname);
-        for (int j = 0; j < f->nparams; j++)
-            if (f->params[j].ty == TY_STRUCT)
-                f->params[j].sdef = find_struct(prog, f->params[j].tyname);
+        int areg = 0;
+        for (int j = 0; j < f->nparams; j++) {
+            Param *p = &f->params[j];
+            if (p->ty == TY_STRUCT)
+                p->sdef = find_struct(prog, p->tyname);
+            p->areg = areg;
+            areg += p->ty == TY_SLICE ? 2 : 1;
+        }
     }
     for (int i = 0; i < prog->nfuncs; i++)
         check_func(&c, prog->funcs[i]);
@@ -766,8 +1003,9 @@ int check_program(Program *prog, const Abi *abi, int require_main)
         if (!m) {
             err(&c, 1, 1, "no 'main' function");
         } else {
-            if (m->nparams != 0)
-                err(&c, m->line, m->col, "'main' with arguments is not implemented yet");
+            if (m->nparams > 1 || (m->nparams == 1 && !is_args_param(&m->params[0])))
+                err(&c, m->line, m->col,
+                    "'main' takes no parameters or one: 'stack args: &[&[u8]]'");
             if (m->ret_ty != TY_VOID && (m->ret_storage != ST_REG || m->ret_ty != TY_I32))
                 err(&c, m->line, m->col, "'main' must return 'reg i32' or 'void'");
         }
