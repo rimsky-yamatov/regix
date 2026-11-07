@@ -1,0 +1,19 @@
+// expect-exit: 5
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn make(reg a: i32, reg b: i32) -> heap Point {
+    heap p: Point = Point { x: a, y: b }
+    return(p)
+}
+
+fn sum(heap p: Point) -> reg i32 {
+    return(p.x + p.y)
+}
+
+fn main() -> reg i32 {
+    heap q: Point = make(2, 3)
+    return(sum(q))
+}
