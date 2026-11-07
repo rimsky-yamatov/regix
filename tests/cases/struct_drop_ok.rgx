@@ -1,0 +1,12 @@
+// expect-exit: 5
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn main() -> reg i32 {
+    stack p: Point = Point { x: 2, y: 3 }
+    reg r: i32 = p.x + p.y
+    drop(p)
+    return(r)
+}
