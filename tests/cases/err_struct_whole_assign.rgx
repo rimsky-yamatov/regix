@@ -1,0 +1,10 @@
+// expect-error: cannot assign a whole struct
+struct P {
+    x: i32,
+}
+
+fn main() -> reg i32 {
+    stack p: P = P { x: 1 }
+    p = P { x: 2 }
+    return(0)
+}
