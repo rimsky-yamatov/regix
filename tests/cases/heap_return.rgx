@@ -1,0 +1,10 @@
+// expect-exit: 42
+fn make(reg v: i32) -> heap i32 {
+    heap h: i32 = v
+    return(h)
+}
+
+fn main() -> reg i32 {
+    heap x: i32 = make(42)
+    return(x)
+}
