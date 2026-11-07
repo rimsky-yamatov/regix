@@ -1,0 +1,9 @@
+// expect-exit: 14
+fn take(heap h: i32) -> reg i32 {
+    return(h + 4)
+}
+
+fn main() -> reg i32 {
+    heap x: i32 = 10
+    return(take(x))
+}
