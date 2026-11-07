@@ -1,0 +1,9 @@
+// expect-exit: 8
+fn f(reg a: i32) -> stack i32 {
+    return(a + 1)
+}
+
+fn main() -> reg i32 {
+    reg r: i32 = f(7)
+    return(r)
+}
