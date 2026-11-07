@@ -57,25 +57,36 @@ Java-style packages with `::` as separator:
 
 Only imported names are usable. `pub` marks items visible outside the package.
 
-## Implementation status (v0.1)
+## Implementation status (v0.1.0)
 
 Implemented:
 
-* `i32`, `reg` / `stack` / `heap` local variables, `if`/`else`, `while`,
-  assignment, calls, guaranteed tail calls, `package`/`import` parsing.
-* `stack` variables live in 8-byte frame slots below `rbp`.
-* `heap` variables hold a pointer in a frame slot. The value is allocated
-  by a tiny runtime (`mmap` on Linux, `HeapAlloc` on Windows) and released at
-  scope end, before every `return`, and before a tail call jumps away.
-* `drop(x)` zero-fills and releases (`xor` for `reg`, a zero store for
-  `stack`, zero store plus free for `heap`). Use after drop, double drop, and
-  dropping in only one branch of an `if` or inside a loop are compile errors.
-  A branch that ends in `return` does not count for the merge rule.
+* Types: `i32` and C-style structs of `i32` fields and nested structs
+  (stored inline). Struct literals `P { x: 1, y: 2 }` initialize `stack` or
+  `heap` variables; fields are read and assigned with `.`.
+* Variables: `reg`, `stack`, `heap`; `if`/`else`, `while`, assignment, calls,
+  guaranteed tail calls.
+* `stack` values live in frame slots (a stack struct takes consecutive slots).
+* `heap` values are allocated by a tiny runtime and released at scope end,
+  before every `return`, and before a tail call jumps away.
+* `drop(x)` zero-fills and releases (all fields of a struct). Use after drop,
+  double drop, and dropping in only one branch of an `if` or inside a loop are
+  compile errors; a branch ending in `return` does not count for the merge.
+* Parameters and return values: `reg`, `stack` (copied into the callee) and
+  `heap` (the owner moves: the caller's variable cannot be used afterwards;
+  `-> heap T` hands ownership to the caller). Struct parameters and returns
+  must be `heap`.
+* `import` is enforced for `std::io::print_i32(n)` (prints a decimal and a
+  newline). This is a stand-in until slices exist.
+* `package` names mangle into assembler symbols.
 
-Known limits:
+Known limits (planned, not implemented):
 
-* Each heap value currently takes a whole page on Linux (`mmap`/`munmap`).
-  Fine for correctness, not for performance; a real allocator comes later.
-* `stack` and `heap` parameters and return values are not implemented yet.
-* Not yet: structs, arrays, slices, import resolution, `main` arguments,
-  standard library.
+* Struct fields cannot have `heap` (recursive types); whole-struct copy,
+  move-by-assignment and `copy(x)`; the `secret` modifier.
+* Arrays, strings and slices; `main` arguments; the rest of the standard
+  library.
+* Importing user packages from other files (only the standard stub resolves).
+* Each heap value takes a whole page on Linux (`mmap`/`munmap`) and 16 bytes
+  from the process heap on Windows; a real allocator comes later.
+* A `reg` struct is rejected.
