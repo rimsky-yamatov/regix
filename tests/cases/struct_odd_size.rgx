@@ -1,0 +1,13 @@
+// expect-exit: 6
+// Three i32 fields: 12 bytes, two frame slots.
+struct Tri {
+    a: i32,
+    b: i32,
+    c: i32,
+}
+
+fn main() -> reg i32 {
+    stack s: Tri = Tri { a: 1, b: 2, c: 3 }
+    stack extra: i32 = 100
+    return(s.a + s.b + s.c)
+}
