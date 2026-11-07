@@ -15,8 +15,8 @@ $(B)/rgc: $(RGC_SRC) $(wildcard rgc/*.h common/*.h) | $(B)
 $(B)/rgfmt: rgfmt/main.c common/util.c $(wildcard common/*.h) | $(B)
 	$(CC) $(CFLAGS) -Icommon -o $@ rgfmt/main.c common/util.c
 
-$(B)/rgpm: rgpm/main.c $(wildcard common/*.h) | $(B)
-	$(CC) $(CFLAGS) -Icommon -o $@ rgpm/main.c
+$(B)/rgpm: rgpm/main.c common/util.c $(wildcard common/*.h) | $(B)
+	$(CC) $(CFLAGS) -Icommon -o $@ rgpm/main.c common/util.c
 
 $(B)/run_tests: tests/run_tests.c common/util.c $(wildcard common/*.h) | $(B)
 	$(CC) $(CFLAGS) -Icommon -o $@ tests/run_tests.c common/util.c
