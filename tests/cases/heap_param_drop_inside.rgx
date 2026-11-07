@@ -1,0 +1,11 @@
+// expect-exit: 3
+fn consume(heap h: i32) -> reg i32 {
+    reg v: i32 = h
+    drop(h)
+    return(v)
+}
+
+fn main() -> reg i32 {
+    heap x: i32 = 3
+    return(consume(x))
+}
