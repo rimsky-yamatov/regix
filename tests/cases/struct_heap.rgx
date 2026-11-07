@@ -1,0 +1,11 @@
+// expect-exit: 9
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn main() -> reg i32 {
+    heap p: Point = Point { x: 4, y: 5 }
+    p.x = p.x + 0
+    return(p.x + p.y)
+}
