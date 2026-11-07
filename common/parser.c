@@ -71,10 +71,51 @@ static Storage accept_storage(Parser *p)
     }
 }
 
-/* i32, void (if allowed) or the name of a struct (returned in *sname). */
-static Ty parse_type(Parser *p, int allow_void, char **sname)
+/* Element type of an array or slice: i32 or u8. */
+static Ty parse_elem(Parser *p)
 {
-    Token *t = expect(p, T_IDENT, "type");
+    Token *t = expect(p, T_IDENT, "element type");
+    if (t->len == 3 && memcmp(t->text, "i32", 3) == 0)
+        return TY_I32;
+    if (t->len == 2 && memcmp(t->text, "u8", 2) == 0)
+        return TY_U8;
+    rgx_die(p->file, t->line, t->col, "unsupported element type '%.*s' (use i32 or u8)",
+            t->len, t->text);
+}
+
+/* i32, void (if allowed), [T; N], &[T], or the name of a struct (in *sname).
+ * `ai` is NULL where array and slice types are not allowed. */
+static Ty parse_type(Parser *p, int allow_void, char **sname, ArrInfo *ai)
+{
+    Token *t = cur(p);
+    if (t->kind == T_LBRACKET || t->kind == T_AMP) {
+        if (!ai)
+            rgx_die(p->file, t->line, t->col, "array and slice types are not allowed here");
+        if (t->kind == T_LBRACKET) {
+            advance(p);
+            ai->elem = parse_elem(p);
+            expect(p, T_SEMI, "';'");
+            Token *n = expect(p, T_INT, "array length");
+            if (n->ival <= 0)
+                rgx_die(p->file, n->line, n->col, "array length must be positive");
+            ai->alen = (int)n->ival;
+            expect(p, T_RBRACKET, "']'");
+            return TY_ARRAY;
+        }
+        advance(p);
+        expect(p, T_LBRACKET, "'['");
+        if (accept(p, T_AMP)) {
+            expect(p, T_LBRACKET, "'['");
+            ai->elem2 = parse_elem(p);
+            expect(p, T_RBRACKET, "']'");
+            ai->elem = TY_SLICE;
+        } else {
+            ai->elem = parse_elem(p);
+        }
+        expect(p, T_RBRACKET, "']'");
+        return TY_SLICE;
+    }
+    t = expect(p, T_IDENT, "type");
     if (t->len == 3 && memcmp(t->text, "i32", 3) == 0)
         return TY_I32;
     if (allow_void && t->len == 4 && memcmp(t->text, "void", 4) == 0)
@@ -99,6 +140,46 @@ static Expr *parse_expr(Parser *p);
 static Expr *parse_primary(Parser *p)
 {
     Token *t = cur(p);
+    if (t->kind == T_STRING) {
+        advance(p);
+        Expr *e = mk_expr(E_STR, t);
+        e->sval = t->sval;
+        e->slen = t->slen;
+        return e;
+    }
+    if (t->kind == T_AMP) {
+        advance(p);
+        Token *vt = expect(p, T_IDENT, "variable name");
+        Expr *v = mk_expr(E_VAR, vt);
+        v->name = ident_text(vt);
+        Expr *e = mk_expr(E_ADDR, t);
+        e->l = v;
+        return e;
+    }
+    if (t->kind == T_LBRACKET) {
+        advance(p);
+        if (at(p, T_RBRACKET))
+            rgx_die(p->file, t->line, t->col, "an array literal needs at least one element");
+        Expr *first = parse_expr(p);
+        if (accept(p, T_SEMI)) {
+            Token *n = expect(p, T_INT, "repeat count");
+            expect(p, T_RBRACKET, "']'");
+            Expr *e = mk_expr(E_ARRAYREP, t);
+            e->l = first;
+            e->val = n->ival;
+            return e;
+        }
+        Expr *e = mk_expr(E_ARRAYLIT, t);
+        VEC_PUSH(e->args, e->nargs, e->cap, first);
+        while (accept(p, T_COMMA)) {
+            if (at(p, T_RBRACKET))
+                break;
+            Expr *x = parse_expr(p);
+            VEC_PUSH(e->args, e->nargs, e->cap, x);
+        }
+        expect(p, T_RBRACKET, "']'");
+        return e;
+    }
     if (t->kind == T_INT) {
         advance(p);
         Expr *e = mk_expr(E_INT, t);
@@ -138,6 +219,14 @@ static Expr *parse_primary(Parser *p)
         }
         Expr *e = mk_expr(E_VAR, t);
         e->name = name;
+        if (at(p, T_LBRACKET)) {
+            advance(p);
+            Expr *ix = mk_expr(E_INDEX, t);
+            ix->l = e;
+            ix->r = parse_expr(p);
+            expect(p, T_RBRACKET, "']'");
+            return ix;
+        }
         while (at(p, T_DOT)) {
             Token *dt = advance(p);
             Token *ft = expect(p, T_IDENT, "field name");
@@ -272,7 +361,7 @@ static Stmt *parse_stmt(Parser *p)
         s->storage = st;
         s->name = ident_text(expect(p, T_IDENT, "variable name"));
         expect(p, T_COLON, "':'");
-        s->ty = parse_type(p, 0, &s->tyname);
+        s->ty = parse_type(p, 0, &s->tyname, &s->arr);
         if (accept(p, T_ASSIGN))
             s->expr = parse_expr(p);
     } else if (t->kind == T_KW_IF) {
@@ -312,8 +401,16 @@ static Stmt *parse_stmt(Parser *p)
         expect(p, T_ASSIGN, "'='");
         s->expr = parse_expr(p);
     } else {
-        s = mk_stmt(S_EXPR, t);
-        s->expr = parse_expr(p);
+        Expr *x = parse_expr(p);
+        if (x->kind == E_INDEX && at(p, T_ASSIGN)) {
+            advance(p);
+            s = mk_stmt(S_IASSIGN, t);
+            s->lhs = x;
+            s->expr = parse_expr(p);
+        } else {
+            s = mk_stmt(S_EXPR, t);
+            s->expr = x;
+        }
     }
     accept(p, T_SEMI);
     return s;
@@ -363,7 +460,7 @@ static Func *parse_func(Parser *p, int is_pub)
             }
             pr.name = ident_text(expect(p, T_IDENT, "parameter name"));
             expect(p, T_COLON, "':'");
-            pr.ty = parse_type(p, 0, &pr.tyname);
+            pr.ty = parse_type(p, 0, &pr.tyname, &pr.arr);
             VEC_PUSH(f->params, f->nparams, f->pcap, pr);
         } while (accept(p, T_COMMA));
     }
@@ -384,7 +481,7 @@ static Func *parse_func(Parser *p, int is_pub)
         if (f->ret_storage == ST_NONE)
             rgx_die(p->file, rt->line, rt->col,
                     "return type needs a storage class (reg, stack or heap), e.g. '-> reg i32'");
-        f->ret_ty = parse_type(p, 0, &f->ret_tyname);
+        f->ret_ty = parse_type(p, 0, &f->ret_tyname, NULL);
     }
     f->body = parse_block(p);
     return f;
@@ -413,7 +510,7 @@ static StructDef *parse_struct(Parser *p, int is_pub)
         f.col = ft->col;
         f.name = ident_text(expect(p, T_IDENT, "field name"));
         expect(p, T_COLON, "':'");
-        f.ty = parse_type(p, 0, &f.tyname);
+        f.ty = parse_type(p, 0, &f.tyname, NULL);
         VEC_PUSH(sd->fields, sd->nfields, sd->fcap, f);
         if (!accept(p, T_COMMA) && !accept(p, T_SEMI))
             break;
