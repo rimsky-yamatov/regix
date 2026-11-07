@@ -1,0 +1,4 @@
+// expect-error: 'std::io' is not imported
+fn main() -> void {
+    std::io::print_i32(1)
+}
