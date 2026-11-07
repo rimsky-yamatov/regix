@@ -1,0 +1,5 @@
+// expect-error: unknown type 'Nope'
+fn main() -> reg i32 {
+    stack p: Nope = Nope { x: 1 }
+    return(0)
+}
