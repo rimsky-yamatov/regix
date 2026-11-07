@@ -1,0 +1,9 @@
+// expect-error: use of moved variable 'x'
+fn take(heap h: i32) -> void {
+}
+
+fn main() -> reg i32 {
+    heap x: i32 = 1
+    take(x)
+    return(x)
+}
