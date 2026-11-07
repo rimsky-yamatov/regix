@@ -1,0 +1,9 @@
+// expect-error: not a 'heap' variable
+fn take(heap h: i32) -> void {
+}
+
+fn main() -> reg i32 {
+    stack x: i32 = 1
+    take(x)
+    return(0)
+}
