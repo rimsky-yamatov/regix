@@ -1,5 +1,7 @@
 package com::example::math;
 
+import std::io;
+
 fn fact(reg n: i32, reg acc: i32) -> reg i32 {
     if (n < 2) {
         return(acc)
@@ -8,5 +10,6 @@ fn fact(reg n: i32, reg acc: i32) -> reg i32 {
 }
 
 fn main() -> reg i32 {
-    return(fact(5, 1))
+    std::io::print_i32(fact(5, 1))   // 120
+    return(0)
 }
