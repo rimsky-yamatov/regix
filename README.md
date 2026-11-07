@@ -12,7 +12,7 @@ fn fact(reg n: i32, reg acc: i32) -> reg i32 {
 }
 ```
 
-Status: early work in progress (v0.1). See [docs/spec.md](docs/spec.md).
+Status: v0.1.0, early but working. See [docs/spec.md](docs/spec.md) for the language and its known limits, and [CHANGELOG.md](CHANGELOG.md).
 
 ## Tools
 
@@ -20,7 +20,7 @@ Status: early work in progress (v0.1). See [docs/spec.md](docs/spec.md).
 |---------|------------------------------------------------------|
 | `rgc`   | compiler: `.rgx` to assembly, then `as`/`ld` or `ml64`/`link` |
 | `rgfmt` | formatter (re-indent only for now)                   |
-| `rgpm`  | package manager (skeleton)                           |
+| `rgpm`  | package manager: `init`, `build`, `run`              |
 
 ## Build
 
@@ -37,7 +37,9 @@ Windows (Visual Studio with the C++ tools, from an x64 developer prompt):
 ## Use
 
     rgc examples/fact.rgx -o fact
-    ./fact; echo $?        # 120
+    ./fact                 # prints 120
+
+    rgpm init hello && cd hello && rgpm run
 
     rgc examples/fact.rgx --target windows-x64 -S -o fact.asm   # MASM text only
 
@@ -53,3 +55,6 @@ and attaches them to a GitHub release.
 
     git tag v0.1.0
     git push origin v0.1.0
+
+On Windows, `rgc` uses `ml64` and `link`; if they are not on PATH it looks for
+Visual Studio with `vswhere` and sets up the environment itself.
