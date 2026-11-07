@@ -1,0 +1,8 @@
+// expect-error: contains itself
+struct Loop {
+    inner: Loop,
+}
+
+fn main() -> reg i32 {
+    return(0)
+}
