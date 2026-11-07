@@ -1,0 +1,10 @@
+// expect-error: owned by the caller
+fn make() -> heap i32 {
+    heap h: i32 = 1
+    return(h)
+}
+
+fn main() -> reg i32 {
+    reg x: i32 = make()
+    return(x)
+}
