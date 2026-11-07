@@ -72,7 +72,8 @@ struct Stmt {
     int size;        /* S_DECL, S_DROP: size of the value in bytes */
     int bslots;      /* S_DECL, S_DROP: frame slots of a stack value */
     int adopt;       /* S_DECL (heap): initializer is a call returning an owned heap value */
-    ArrInfo arr;     /* S_DECL: array details */    int *rel;        /* S_RETURN: heap slots to release before leaving */
+    ArrInfo arr;     /* S_DECL: array details */
+    int *rel;        /* S_RETURN: heap slots to release before leaving */
     int nrel, relcap;
 };
 
