@@ -1,0 +1,12 @@
+// expect-error: must be 'heap'
+struct P {
+    x: i32,
+}
+
+fn f(stack p: P) -> reg i32 {
+    return(0)
+}
+
+fn main() -> reg i32 {
+    return(0)
+}
