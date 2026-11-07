@@ -1,0 +1,9 @@
+// expect-error: cannot be 'reg'
+struct P {
+    x: i32,
+}
+
+fn main() -> reg i32 {
+    reg p: P = P { x: 1 }
+    return(0)
+}
