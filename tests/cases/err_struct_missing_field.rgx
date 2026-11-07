@@ -1,0 +1,10 @@
+// expect-error: missing field 'y'
+struct P {
+    x: i32,
+    y: i32,
+}
+
+fn main() -> reg i32 {
+    stack p: P = P { x: 1 }
+    return(0)
+}
