@@ -1,0 +1,22 @@
+import std::io;
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn make(reg x: i32, reg y: i32) -> heap Point {
+    heap p: Point = Point { x: x, y: y }
+    return(p)            // ownership moves to the caller
+}
+
+fn sum(heap p: Point) -> reg i32 {
+    return(p.x + p.y)    // p is released when sum returns
+}
+
+fn main() -> reg i32 {
+    heap q: Point = make(3, 4)
+    q.x = q.x * 10
+    std::io::print_i32(sum(q))   // 34
+    return(0)
+}
