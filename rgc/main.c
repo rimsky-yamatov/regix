@@ -20,6 +20,42 @@ static void usage(FILE *f)
           f);
 }
 
+#ifdef _WIN32
+#include <stdio.h>
+
+/* True if `name` is found on PATH. */
+static int have_tool(const char *name)
+{
+    char *c = xsprintf("where %s >nul 2>&1", name);
+    return system(c) == 0;
+}
+
+/* "call vcvars64.bat && " for the newest Visual Studio with the C++ tools, or "". */
+static char *vs_env_prefix(void)
+{
+    const char *pf = getenv("ProgramFiles(x86)");
+    if (!pf)
+        return xstrdup("");
+    char *cmd = xsprintf("\"\"%s\\Microsoft Visual Studio\\Installer\\vswhere.exe\" -latest -products * "
+                         "-requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 "
+                         "-property installationPath\"", pf);
+    FILE *p = _popen(cmd, "r");
+    if (!p)
+        return xstrdup("");
+    char line[1024];
+    int ok = fgets(line, sizeof line, p) != NULL;
+    _pclose(p);
+    if (!ok)
+        return xstrdup("");
+    size_t n = strlen(line);
+    while (n && (line[n - 1] == '\n' || line[n - 1] == '\r'))
+        line[--n] = '\0';
+    if (n == 0)
+        return xstrdup("");
+    return xsprintf("call \"%s\\VC\\Auxiliary\\Build\\vcvars64.bat\" >nul && ", line);
+}
+#endif
+
 static int run(const char *cmd)
 {
     int rc = system(cmd);
@@ -128,7 +164,18 @@ int main(int argc, char **argv)
         char *c1 = xsprintf("ml64 /nologo /c /Fo%s %s", obj, asm_path);
         char *c2 = xsprintf("link /nologo /subsystem:console /entry:mainCRTStartup "
                             "/nodefaultlib /out:%s %s kernel32.lib", exe, obj);
+#ifdef _WIN32
+        char *prefix = have_tool("ml64") ? xstrdup("") : vs_env_prefix();
+        if (prefix[0]) {
+            /* ml64 is not on PATH: set up Visual Studio's environment in the same shell */
+            char *all = xsprintf("\"%s%s && %s\"", prefix, c1, c2);
+            ok = run(all);
+        } else {
+            ok = run(c1) && run(c2);
+        }
+#else
         ok = run(c1) && run(c2);
+#endif
     } else {
         char *c1 = xsprintf("as --64 %s -o %s", asm_path, obj);
         char *c2 = xsprintf("ld %s -o %s", obj, exe);
