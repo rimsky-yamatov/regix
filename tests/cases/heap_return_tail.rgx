@@ -1,0 +1,14 @@
+// expect-exit: 9
+fn make(reg v: i32) -> heap i32 {
+    heap h: i32 = v
+    return(h)
+}
+
+fn wrap(reg v: i32) -> heap i32 {
+    return(make(v))
+}
+
+fn main() -> reg i32 {
+    heap x: i32 = wrap(9)
+    return(x)
+}
