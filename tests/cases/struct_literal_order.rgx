@@ -1,0 +1,10 @@
+// expect-exit: 1
+struct Pair {
+    a: i32,
+    b: i32,
+}
+
+fn main() -> reg i32 {
+    stack p: Pair = Pair { b: 1, a: 2 }
+    return(p.b)
+}
