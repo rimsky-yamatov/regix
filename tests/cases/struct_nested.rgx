@@ -1,0 +1,17 @@
+// expect-exit: 21
+struct Vec2 {
+    x: i32,
+    y: i32,
+}
+
+struct Rect {
+    id: i32,
+    min: Vec2,
+    max: Vec2,
+}
+
+fn main() -> reg i32 {
+    stack r: Rect = Rect { id: 1, min: Vec2 { x: 2, y: 3 }, max: Vec2 { x: 5, y: 10 } }
+    r.max.x = r.max.x + 0
+    return(r.id + r.min.x + r.min.y + r.max.x + r.max.y)
+}
