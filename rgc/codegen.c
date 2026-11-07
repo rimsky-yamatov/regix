@@ -10,10 +10,12 @@
  *
  *  - 'reg' variables live in callee-saved registers for their whole scope.
  *    Nothing is ever spilled.
- *  - 'stack' variables live in 8-byte slots below rbp.
+ *  - 'stack' variables live in 8-byte frame slots below rbp. A stack struct
+ *    occupies consecutive slots; its bytes start at the lowest address.
  *  - 'heap' variables keep a pointer in an 8-byte slot; the value is
- *    allocated by the runtime (rgx_rt_alloc) and released at scope end,
- *    before any return, or by drop().
+ *    allocated by the runtime (rgx_rt_alloc, size in r10d) and released at
+ *    scope end, before any return, or by drop(). A heap value can be moved
+ *    into a 'heap' parameter or out through a '-> heap' return.
  *  - eax / r10 / r11 are compiler scratch registers. Temporaries that must
  *    survive a nested call are pushed on the machine stack; that is a
  *    compiler-internal detail, not a Regix variable.
@@ -56,32 +58,45 @@ static void emit_jump(const char *op, int label)
 
 /* ---- operands ---- */
 
-static int slot_off(int idx) { return 8 * (idx + 1); }
-
-static void dword_slot(char *buf, size_t sz, int idx)
+/* Memory operand for `off` bytes into a stack value occupying `bslots` slots
+ * that start at slot `idx`. */
+static void dword_at(char *buf, size_t sz, int idx, int bslots, int off)
 {
-    snprintf(buf, sz, "DWORD PTR [rbp-%d]", slot_off(idx));
+    snprintf(buf, sz, "DWORD PTR [rbp-%d]", 8 * (idx + bslots) - off);
 }
 
 static void qword_slot(char *buf, size_t sz, int idx)
 {
-    snprintf(buf, sz, "QWORD PTR [rbp-%d]", slot_off(idx));
+    snprintf(buf, sz, "QWORD PTR [rbp-%d]", 8 * (idx + 1));
 }
+
+/* "DWORD PTR [base+off]" */
+static void dword_via(char *buf, size_t sz, const char *base, int off)
+{
+    if (off)
+        snprintf(buf, sz, "DWORD PTR [%s+%d]", base, off);
+    else
+        snprintf(buf, sz, "DWORD PTR [%s]", base);
+}
+
+static int is_var_like(Expr *e) { return e->kind == E_VAR || e->kind == E_FIELD; }
 
 /* Operands usable directly as a source and untouched by calls. */
 static int is_simple(Expr *e)
 {
-    return e->kind == E_INT || (e->kind == E_VAR && e->vst != ST_HEAP);
+    return e->kind == E_INT || (is_var_like(e) && e->vst != ST_HEAP);
 }
 
 static void operand(Expr *e, char *buf, size_t sz)
 {
     if (e->kind == E_INT)
         snprintf(buf, sz, "%ld", e->val);
-    else if (e->vst == ST_REG)
+    else if (e->kind == E_VAR && e->vst == ST_REG)
         snprintf(buf, sz, "%s", abi->pool32[e->reg]);
+    else if (e->kind == E_VAR)
+        dword_at(buf, sz, e->reg, 1, 0);
     else
-        dword_slot(buf, sz, e->reg);
+        dword_at(buf, sz, e->reg, e->bslots, e->foff);
 }
 
 static int is_reg_or_imm(Expr *e)
@@ -93,25 +108,33 @@ static void gen_expr(Expr *e);
 
 /* ---- calls ---- */
 
+static int heap_param(Expr *call, int i)
+{
+    return i < call->callee->nparams && call->callee->params[i].storage == ST_HEAP;
+}
+
 static void setup_args(Expr *call)
 {
     int n = call->nargs;
-    char buf[40];
+    char buf[48];
     for (int i = 0; i < n; i++) {
-        if (!is_simple(call->args[i])) {
+        if (!heap_param(call, i) && !is_simple(call->args[i])) {
             gen_expr(call->args[i]);
             emit("push rax");
             cur_push++;
         }
     }
     for (int i = n - 1; i >= 0; i--) {
-        if (!is_simple(call->args[i])) {
+        if (!heap_param(call, i) && !is_simple(call->args[i])) {
             emit("pop %s", abi->arg64[i]);
             cur_push--;
         }
     }
     for (int i = 0; i < n; i++) {
-        if (is_simple(call->args[i])) {
+        if (heap_param(call, i)) {
+            qword_slot(buf, sizeof buf, call->args[i]->reg);
+            emit("mov %s, %s", abi->arg64[i], buf);
+        } else if (is_simple(call->args[i])) {
             operand(call->args[i], buf, sizeof buf);
             emit("mov %s, %s", abi->arg32[i], buf);
         }
@@ -133,7 +156,7 @@ static void gen_call(Expr *e)
 
 static void gen_bin(Expr *e)
 {
-    char buf[40];
+    char buf[48];
     const char *rhs;
     int imm = 0;
 
@@ -189,14 +212,16 @@ static void gen_bin(Expr *e)
 
 static void gen_expr(Expr *e)
 {
-    char buf[40];
+    char buf[48], slot[48];
     switch (e->kind) {
     case E_INT: emit("mov eax, %ld", e->val); break;
     case E_VAR:
+    case E_FIELD:
         if (e->vst == ST_HEAP) {
-            qword_slot(buf, sizeof buf, e->reg);
-            emit("mov r11, %s", buf);
-            emit("mov eax, DWORD PTR [r11]");
+            qword_slot(slot, sizeof slot, e->reg);
+            emit("mov r11, %s", slot);
+            dword_via(buf, sizeof buf, "r11", e->kind == E_FIELD ? e->foff : 0);
+            emit("mov eax, %s", buf);
         } else {
             operand(e, buf, sizeof buf);
             emit("mov eax, %s", buf);
@@ -208,16 +233,38 @@ static void gen_expr(Expr *e)
         break;
     case E_BIN: gen_bin(e); break;
     case E_CALL: gen_call(e); break;
+    case E_STRUCTLIT: break; /* only valid as an initializer */
     }
 }
 
-/* ---- stores, drop, release ---- */
+/* ---- stores ---- */
 
-static void gen_store(Storage st, int idx, Expr *e)
+/* Store expression `e` at byte `off` of a stack or heap value. */
+static void gen_store_mem(Storage st, int idx, int bslots, int off, Expr *e)
 {
-    char buf[40], slot[40];
-    switch (st) {
-    case ST_REG:
+    char buf[48], mem[48], slot[48];
+    if (st == ST_STACK) {
+        dword_at(mem, sizeof mem, idx, bslots, off);
+        if (is_reg_or_imm(e)) {
+            operand(e, buf, sizeof buf);
+            emit("mov %s, %s", mem, buf);
+        } else {
+            gen_expr(e);
+            emit("mov %s, eax", mem);
+        }
+    } else {
+        gen_expr(e);
+        qword_slot(slot, sizeof slot, idx);
+        emit("mov r11, %s", slot);
+        dword_via(mem, sizeof mem, "r11", off);
+        emit("mov %s, eax", mem);
+    }
+}
+
+static void gen_store_var(Storage st, int idx, Expr *e)
+{
+    char buf[48];
+    if (st == ST_REG) {
         if (is_simple(e)) {
             operand(e, buf, sizeof buf);
             emit("mov %s, %s", abi->pool32[idx], buf);
@@ -225,43 +272,68 @@ static void gen_store(Storage st, int idx, Expr *e)
             gen_expr(e);
             emit("mov %s, eax", abi->pool32[idx]);
         }
-        break;
-    case ST_STACK:
-        dword_slot(slot, sizeof slot, idx);
-        if (is_reg_or_imm(e)) {
-            operand(e, buf, sizeof buf);
-            emit("mov %s, %s", slot, buf);
-        } else {
-            gen_expr(e);
-            emit("mov %s, eax", slot);
-        }
-        break;
-    case ST_HEAP:
-        gen_expr(e);
-        qword_slot(slot, sizeof slot, idx);
-        emit("mov r11, %s", slot);
-        emit("mov DWORD PTR [r11], eax");
-        break;
-    default:
-        break;
+    } else {
+        gen_store_mem(st, idx, 1, 0, e);
     }
 }
 
-static void gen_heap_decl(int idx, Expr *init)
+static Expr *lit_value(Expr *lit, const char *name)
 {
-    char slot[40];
-    gen_expr(init);
-    emit("call rgx_rt_alloc");       /* r10 = new block; other registers kept */
-    emit("mov DWORD PTR [r10], eax");
-    qword_slot(slot, sizeof slot, idx);
+    for (int i = 0; i < lit->nargs; i++)
+        if (strcmp(lit->fnames[i], name) == 0)
+            return lit->args[i];
+    return NULL;
+}
+
+static void gen_struct_init(Storage st, int idx, int bslots, StructDef *sd, Expr *lit, int base)
+{
+    for (int i = 0; i < sd->nfields; i++) {
+        Field *f = &sd->fields[i];
+        Expr *v = lit_value(lit, f->name);
+        if (f->ty == TY_STRUCT)
+            gen_struct_init(st, idx, bslots, f->sdef, v, base + f->offset);
+        else
+            gen_store_mem(st, idx, bslots, base + f->offset, v);
+    }
+}
+
+static void gen_alloc(int size, int slot_idx)
+{
+    char slot[48];
+    emit("mov r10d, %d", size);
+    emit("call rgx_rt_alloc");       /* r10 = new zeroed block; other registers kept */
+    qword_slot(slot, sizeof slot, slot_idx);
     emit("mov %s, r10", slot);
 }
 
-static void gen_release(Stmt **rel, int n)
+static void gen_decl(Stmt *s)
 {
-    char slot[40];
+    char slot[48];
+    if (s->storage == ST_HEAP) {
+        if (s->adopt) {
+            gen_expr(s->expr);       /* callee returns an owned pointer in rax */
+            qword_slot(slot, sizeof slot, s->reg);
+            emit("mov %s, rax", slot);
+        } else if (s->ty == TY_STRUCT) {
+            gen_alloc(s->size, s->reg);
+            gen_struct_init(ST_HEAP, s->reg, 1, s->sdef, s->expr, 0);
+        } else {
+            gen_expr(s->expr);       /* value in eax survives the allocation */
+            gen_alloc(4, s->reg);
+            emit("mov DWORD PTR [r10], eax");
+        }
+    } else if (s->ty == TY_STRUCT) {
+        gen_struct_init(ST_STACK, s->reg, s->bslots, s->sdef, s->expr, 0);
+    } else {
+        gen_store_var(s->storage, s->reg, s->expr);
+    }
+}
+
+static void gen_release(const int *rel, int n)
+{
+    char slot[48];
     for (int i = n - 1; i >= 0; i--) {
-        qword_slot(slot, sizeof slot, rel[i]->reg);
+        qword_slot(slot, sizeof slot, rel[i]);
         emit("mov r10, %s", slot);
         emit("call rgx_rt_free");
     }
@@ -269,19 +341,24 @@ static void gen_release(Stmt **rel, int n)
 
 static void gen_drop(Stmt *s)
 {
-    char slot[40];
+    char slot[48], mem[48];
     switch (s->storage) {
     case ST_REG:
         emit("xor %s, %s", abi->pool32[s->reg], abi->pool32[s->reg]);
         break;
     case ST_STACK:
-        dword_slot(slot, sizeof slot, s->reg);
-        emit("mov %s, 0", slot);
+        for (int off = 0; off < s->size; off += 4) {
+            dword_at(mem, sizeof mem, s->reg, s->bslots, off);
+            emit("mov %s, 0", mem);
+        }
         break;
     case ST_HEAP:
         qword_slot(slot, sizeof slot, s->reg);
         emit("mov r10, %s", slot);
-        emit("mov DWORD PTR [r10], 0");
+        for (int off = 0; off < s->size; off += 4) {
+            dword_via(mem, sizeof mem, "r10", off);
+            emit("mov %s, 0", mem);
+        }
         emit("call rgx_rt_free");
         break;
     default:
@@ -305,13 +382,13 @@ static void gen_stmt(Stmt *s)
 {
     switch (s->kind) {
     case S_DECL:
-        if (s->storage == ST_HEAP)
-            gen_heap_decl(s->reg, s->expr);
-        else
-            gen_store(s->storage, s->reg, s->expr);
+        gen_decl(s);
         break;
     case S_ASSIGN:
-        gen_store(s->storage, s->reg, s->expr);
+        gen_store_var(s->storage, s->reg, s->expr);
+        break;
+    case S_FASSIGN:
+        gen_store_mem(s->lhs->vst, s->lhs->reg, s->lhs->bslots, s->lhs->foff, s->expr);
         break;
     case S_DROP:
         gen_drop(s);
@@ -356,8 +433,13 @@ static void gen_stmt(Stmt *s)
                 emit("jmp %s", s->expr->callee->sym);
             }
         } else {
-            if (s->expr)
+            if (s->expr && fn->ret_storage == ST_HEAP) {
+                char slot[48];       /* move the owned pointer out */
+                qword_slot(slot, sizeof slot, s->expr->reg);
+                emit("mov rax, %s", slot);
+            } else if (s->expr) {
                 gen_expr(s->expr);
+            }
             gen_release(s->rel, s->nrel);
             emit_jump("jmp", lbl_ret);
         }
@@ -382,6 +464,7 @@ static void gen_block(Block *b)
 
 static void gen_func(Func *f)
 {
+    char slot[48];
     fn = f;
     cur_push = 0;
     lbl_ret = label_seq++;
@@ -404,8 +487,18 @@ static void gen_func(Func *f)
     for (int i = 0; i < f->nregs; i++)
         emit("push %s", abi->pool64[i]);
     label_def(lbl_body);
-    for (int i = 0; i < f->nparams; i++)
-        emit("mov %s, %s", abi->pool32[i], abi->arg32[i]);
+    for (int i = 0; i < f->nparams; i++) {
+        Param *p = &f->params[i];
+        if (p->storage == ST_REG) {
+            emit("mov %s, %s", abi->pool32[p->idx], abi->arg32[i]);
+        } else if (p->storage == ST_STACK) {
+            dword_at(slot, sizeof slot, p->idx, 1, 0);
+            emit("mov %s, %s", slot, abi->arg32[i]);
+        } else {
+            qword_slot(slot, sizeof slot, p->idx);
+            emit("mov %s, %s", slot, abi->arg64[i]);
+        }
+    }
 
     gen_block(f->body);
 
@@ -417,12 +510,13 @@ static void gen_func(Func *f)
     fputc('\n', out);
 }
 
-/* ---- heap runtime ---- */
+/* ---- runtime ---- */
 
-/* rgx_rt_alloc: returns a zeroed block in r10, preserves all other registers.
+/* rgx_rt_alloc: r10d = size; returns a zeroed block in r10, preserves all
+ *               other registers. (Linux maps one page per block.)
  * rgx_rt_free:  releases the block in r10, preserves all registers.
  * Call sites are 16-byte aligned. */
-static void gen_runtime(void)
+static void gen_heap_runtime(void)
 {
     if (!abi->windows) {
         fputs("rgx_rt_alloc:\n", out);
@@ -477,14 +571,16 @@ static void gen_runtime(void)
         emit("push r8");
         emit("push r9");
         emit("push r11");
-        emit("sub rsp, 40");
+        emit("push r10");
+        emit("sub rsp, 32");
         emit("call GetProcessHeap");
         emit("mov rcx, rax");
         emit("mov edx, 8");        /* HEAP_ZERO_MEMORY */
-        emit("mov r8d, 16");
+        emit("mov r8d, DWORD PTR [rsp+32]");
         emit("call HeapAlloc");
         emit("mov r10, rax");
-        emit("add rsp, 40");
+        emit("add rsp, 32");
+        emit("add rsp, 8");        /* discard the saved size */
         emit("pop r11");
         emit("pop r9");
         emit("pop r8");
@@ -518,6 +614,69 @@ static void gen_runtime(void)
         emit("ret");
         fputs("rgx_rt_free ENDP\n\n", out);
     }
+}
+
+/* std::io::print_i32: prints a signed decimal and a newline. */
+static void gen_print_runtime(void)
+{
+    int l_pos = label_seq++, l_loop = label_seq++, l_nosign = label_seq++;
+    const char *arg = abi->arg32[0];
+    if (abi->windows)
+        fputs("rgx_std_io_print_i32 PROC\n", out);
+    else
+        fputs("rgx_std_io_print_i32:\n", out);
+    emit("push rbp");
+    emit("mov rbp, rsp");
+    emit("sub rsp, %d", abi->windows ? 96 : 32);
+    emit("movsxd rax, %s", arg);
+    emit("mov r9, rax");
+    emit("test rax, rax");
+    emit_jump("jns", l_pos);
+    emit("neg rax");
+    label_def(l_pos);
+    emit("lea r8, [rbp-1]");
+    emit("mov BYTE PTR [r8], 10");
+    emit("mov r10, 10");
+    label_def(l_loop);
+    emit("xor edx, edx");
+    emit("div r10");
+    emit("add dl, 48");
+    emit("dec r8");
+    emit("mov BYTE PTR [r8], dl");
+    emit("test rax, rax");
+    emit_jump("jnz", l_loop);
+    emit("test r9, r9");
+    emit_jump("jns", l_nosign);
+    emit("dec r8");
+    emit("mov BYTE PTR [r8], 45");
+    label_def(l_nosign);
+    if (!abi->windows) {
+        emit("mov rdx, rbp");
+        emit("sub rdx, r8");
+        emit("mov rsi, r8");
+        emit("mov edi, 1");
+        emit("mov eax, 1");
+        emit("syscall");
+    } else {
+        emit("mov QWORD PTR [rbp-40], r8");
+        emit("mov rax, rbp");
+        emit("sub rax, r8");
+        emit("mov QWORD PTR [rbp-48], rax");
+        emit("mov ecx, -11");      /* STD_OUTPUT_HANDLE */
+        emit("call GetStdHandle");
+        emit("mov rcx, rax");
+        emit("mov rdx, QWORD PTR [rbp-40]");
+        emit("mov r8, QWORD PTR [rbp-48]");
+        emit("lea r9, [rbp-52]");
+        emit("mov QWORD PTR [rsp+32], 0");
+        emit("call WriteFile");
+    }
+    emit("mov rsp, rbp");
+    emit("pop rbp");
+    emit("ret");
+    if (abi->windows)
+        fputs("rgx_std_io_print_i32 ENDP\n", out);
+    fputc('\n', out);
 }
 
 static void gen_entry(Func *m)
@@ -564,6 +723,10 @@ void codegen_program(Program *prog, const Abi *a, FILE *o)
             fputs("EXTRN HeapAlloc:PROC\n", out);
             fputs("EXTRN HeapFree:PROC\n", out);
         }
+        if (prog->uses_print) {
+            fputs("EXTRN GetStdHandle:PROC\n", out);
+            fputs("EXTRN WriteFile:PROC\n", out);
+        }
         for (int i = 0; i < prog->nfuncs; i++)
             fprintf(out, "PUBLIC %s\n", prog->funcs[i]->sym);
         if (main_fn)
@@ -582,7 +745,9 @@ void codegen_program(Program *prog, const Abi *a, FILE *o)
         gen_func(prog->funcs[i]);
 
     if (prog->uses_heap)
-        gen_runtime();
+        gen_heap_runtime();
+    if (prog->uses_print)
+        gen_print_runtime();
     if (main_fn)
         gen_entry(main_fn);
 
