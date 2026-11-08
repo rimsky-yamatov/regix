@@ -1,0 +1,8 @@
+// expect-error: pass a slice
+fn f(stack a: [i32; 2]) -> reg i32 {
+    return(0)
+}
+
+fn main() -> reg i32 {
+    return(0)
+}
