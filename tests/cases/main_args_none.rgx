@@ -1,0 +1,4 @@
+// expect-exit: 1
+fn main(stack args: &[&[u8]]) -> reg i32 {
+    return(args.len)
+}
