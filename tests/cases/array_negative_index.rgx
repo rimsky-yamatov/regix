@@ -1,0 +1,6 @@
+// expect-exit: 101
+fn main() -> reg i32 {
+    stack a: [i32; 3] = [1, 2, 3]
+    reg i: i32 = 0 - 1
+    return(a[i])
+}
