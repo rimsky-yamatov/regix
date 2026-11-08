@@ -1,0 +1,9 @@
+// expect-exit: 23
+fn f(reg a: i32, stack s: &[i32], reg b: i32) -> reg i32 {
+    return(a + s[0] + s[1] + b)
+}
+
+fn main() -> reg i32 {
+    stack arr: [i32; 2] = [5, 6]
+    return(f(7, &arr, 5))
+}
