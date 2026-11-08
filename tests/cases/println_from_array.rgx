@@ -1,0 +1,9 @@
+// expect-exit: 0
+// expect-stdout: Hello
+import std::io;
+
+fn main() -> void {
+    heap s: [u8; 5] = "Hello"
+    std::io::println(&s)
+    drop(s)
+}
