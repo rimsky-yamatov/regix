@@ -1,0 +1,17 @@
+// expect-exit: 0
+// 300 live 4000-byte arrays need more than one 1 MiB chunk; values must survive.
+fn rec(reg n: i32) -> reg i32 {
+    heap a: [i32; 1000] = [n; 1000]
+    if (n == 0) {
+        return(0)
+    }
+    reg r: i32 = rec(n - 1)
+    if (a[500] != n) {
+        return(99)
+    }
+    return(r)
+}
+
+fn main() -> reg i32 {
+    return(rec(300))
+}
