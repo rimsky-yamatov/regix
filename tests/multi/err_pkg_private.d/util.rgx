@@ -1,0 +1,5 @@
+package util;
+
+fn hidden() -> reg i32 {
+    return(1)
+}

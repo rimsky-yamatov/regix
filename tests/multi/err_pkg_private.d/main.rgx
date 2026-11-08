@@ -1,0 +1,6 @@
+// expect-error: is not public in package 'util'
+import util;
+
+fn main() -> reg i32 {
+    return(util::hidden())
+}
