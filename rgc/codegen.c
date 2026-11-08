@@ -734,53 +734,104 @@ static void gen_func(Func *f)
 /* ---- runtime ---- */
 
 /* rgx_rt_alloc: r10d = size; returns a zeroed block in r10, preserves all
- *               other registers. (Linux maps one page per block.)
+ *               other registers. (Linux: size-class allocator.)
  * rgx_rt_free:  releases the block in r10, preserves all registers.
  * Call sites are 16-byte aligned. */
 static void gen_heap_runtime(void)
 {
     if (!abi->windows) {
+        /* Size-class allocator: each block has a 16-byte header holding
+         * log2(block size). Blocks are powers of two from 32 to 8192 bytes
+         * (9 classes), carved from 1 MiB mmap chunks; free blocks go on a
+         * per-class list and are reused. Fresh memory is zero; reused blocks
+         * are not cleared (Regix initializes every byte it hands out). */
+        int l_big = label_seq++, l_carve = label_seq++, l_retry = label_seq++;
+        int l_grow = label_seq++, l_done = label_seq++;
         fputs("rgx_rt_alloc:\n", out);
         emit("push rax");
-        emit("push rdi");
-        emit("push rsi");
+        emit("push rcx");
         emit("push rdx");
+        emit("push rsi");
+        emit("push rdi");
         emit("push r8");
         emit("push r9");
+        emit("push r11");
+        emit("mov eax, r10d");
+        emit("add eax, 16");
+        emit("cmp eax, 32");
+        emit_jump("jae", l_big);
+        emit("mov eax, 32");
+        label_def(l_big);
+        emit("dec eax");
+        emit("bsr ecx, eax");
+        emit("inc ecx");               /* ecx = log2(block size) */
+        emit("mov edx, ecx");
+        emit("sub edx, 5");            /* class index 0..8 */
+        emit("lea r8, [rip+rgx_heap_free]");
+        emit("mov r9, QWORD PTR [r8+rdx*8]");
+        emit("test r9, r9");
+        emit_jump("jz", l_carve);
+        emit("mov rax, QWORD PTR [r9]");   /* pop a free block */
+        emit("mov QWORD PTR [r8+rdx*8], rax");
+        emit("mov QWORD PTR [r9], rcx");
+        emit("lea r10, [r9+16]");
+        emit_jump("jmp", l_done);
+        label_def(l_carve);
+        emit("mov r11d, 1");
+        emit("shl r11, cl");               /* r11 = block size */
+        label_def(l_retry);
+        emit("lea r8, [rip+rgx_heap_cur]");
+        emit("mov r9, QWORD PTR [r8]");
+        emit("lea rax, [r9+r11]");
+        emit("cmp rax, QWORD PTR [r8+8]");
+        emit_jump("ja", l_grow);
+        emit("mov QWORD PTR [r8], rax");
+        emit("mov QWORD PTR [r9], rcx");
+        emit("lea r10, [r9+16]");
+        emit_jump("jmp", l_done);
+        label_def(l_grow);
         emit("push rcx");
         emit("push r11");
-        emit("mov eax, 9");        /* mmap(0, 4096, RW, PRIVATE|ANON, -1, 0) */
+        emit("mov eax, 9");            /* mmap(0, 1 MiB, RW, PRIVATE|ANON, -1, 0) */
         emit("xor edi, edi");
-        emit("mov esi, 4096");
+        emit("mov esi, 1048576");
         emit("mov edx, 3");
         emit("mov r10d, 34");
         emit("mov r8, -1");
         emit("xor r9d, r9d");
         emit("syscall");
-        emit("mov r10, rax");
         emit("pop r11");
         emit("pop rcx");
+        emit("lea r8, [rip+rgx_heap_cur]");
+        emit("mov QWORD PTR [r8], rax");
+        emit("add rax, 1048576");
+        emit("mov QWORD PTR [r8+8], rax");
+        emit_jump("jmp", l_retry);
+        label_def(l_done);
+        emit("pop r11");
         emit("pop r9");
         emit("pop r8");
-        emit("pop rdx");
-        emit("pop rsi");
         emit("pop rdi");
+        emit("pop rsi");
+        emit("pop rdx");
+        emit("pop rcx");
         emit("pop rax");
         emit("ret");
         fputs("\nrgx_rt_free:\n", out);
         emit("push rax");
-        emit("push rdi");
-        emit("push rsi");
         emit("push rcx");
-        emit("push r11");
-        emit("mov rdi, r10");      /* munmap(ptr, 4096) */
-        emit("mov esi, 4096");
-        emit("mov eax, 11");
-        emit("syscall");
-        emit("pop r11");
+        emit("push rdx");
+        emit("push r8");
+        emit("lea r8, [r10-16]");          /* block header */
+        emit("mov rcx, QWORD PTR [r8]");
+        emit("sub ecx, 5");
+        emit("lea rdx, [rip+rgx_heap_free]");
+        emit("mov rax, QWORD PTR [rdx+rcx*8]");
+        emit("mov QWORD PTR [r8], rax");   /* link into the class list */
+        emit("mov QWORD PTR [rdx+rcx*8], r8");
+        emit("pop r8");
+        emit("pop rdx");
         emit("pop rcx");
-        emit("pop rsi");
-        emit("pop rdi");
         emit("pop rax");
         emit("ret");
         fputc('\n', out);
@@ -1117,6 +1168,14 @@ static void gen_entry(Func *m)
 
 /* ---- data ---- */
 
+/* Linux allocator state: nine free lists, then the bump pointer and its end. */
+static void gen_heap_data(void)
+{
+    if (abi->windows || !prog_g->uses_heap)
+        return;
+    fputs(".section .bss\n.balign 8\nrgx_heap_free:\n    .zero 72\nrgx_heap_cur:\n    .zero 8\nrgx_heap_end:\n    .zero 8\n", out);
+}
+
 static void gen_strings(void)
 {
     if (prog_g->nstrs == 0)
@@ -1198,6 +1257,7 @@ void codegen_program(Program *prog, const Abi *a, FILE *o)
         gen_entry(main_fn);
 
     gen_strings();
+    gen_heap_data();
 
     if (abi->windows)
         fputs("END\n", out);
