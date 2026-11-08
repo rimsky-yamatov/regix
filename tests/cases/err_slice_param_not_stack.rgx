@@ -1,0 +1,8 @@
+// expect-error: must be 'stack'
+fn f(reg s: &[i32]) -> reg i32 {
+    return(0)
+}
+
+fn main() -> reg i32 {
+    return(0)
+}
