@@ -1,0 +1,8 @@
+// expect-exit: 5
+fn count(stack s: &[u8]) -> reg i32 {
+    return(s.len)
+}
+
+fn main() -> reg i32 {
+    return(count("Hello"))
+}
