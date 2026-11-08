@@ -1,0 +1,6 @@
+// expect-error: unterminated string literal
+fn main() -> reg i32 {
+    reg x: i32 = 0
+    std::io::println("oops)
+    return(0)
+}
