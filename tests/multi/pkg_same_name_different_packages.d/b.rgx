@@ -1,0 +1,5 @@
+package b;
+
+pub fn value() -> reg i32 {
+    return(20)
+}

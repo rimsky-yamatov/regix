@@ -1,0 +1,7 @@
+// expect-exit: 30
+import a;
+import b;
+
+fn main() -> reg i32 {
+    return(a::value() + b::value())
+}
