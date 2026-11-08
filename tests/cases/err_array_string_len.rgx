@@ -1,0 +1,5 @@
+// expect-error: the string has 5 bytes but the array holds 4
+fn main() -> reg i32 {
+    stack s: [u8; 4] = "Hello"
+    return(0)
+}
