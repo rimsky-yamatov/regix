@@ -1,0 +1,16 @@
+// expect-exit: 0
+// Allocating after a release reuses the block; the new value must be the new one.
+fn make(reg v: i32) -> reg i32 {
+    heap t: i32 = v
+    return(t)
+}
+
+fn main() -> reg i32 {
+    reg a: i32 = make(11)
+    reg b: i32 = make(22)
+    reg c: i32 = make(33)
+    if (a != 11) { return(1) }
+    if (b != 22) { return(2) }
+    if (c != 33) { return(3) }
+    return(0)
+}
