@@ -57,36 +57,69 @@ Java-style packages with `::` as separator:
 
 Only imported names are usable. `pub` marks items visible outside the package.
 
-## Implementation status (v0.1.0)
+## Arrays, slices and strings
+
+    stack a: [i32; 4] = [1, 2, 3, 4]      // literal
+    stack z: [i32; 16] = [0; 16]          // repeat
+    heap  s: [u8; 5] = "Hello"            // string literal (length must match)
+
+* Element types are `i32` and `u8`. `u8` exists only as an element type: a
+  read yields an `i32`, a write truncates to 8 bits.
+* `a[i]` reads and writes; `a.len` is the length. Every index is bounds
+  checked: a constant index is a compile error, any other failure exits the
+  program with code 101.
+* An array cannot be `reg`. It can be `stack` or `heap`, and `drop(a)` zero
+  fills every byte.
+* A slice `&[T]` is a borrowed, read-only (pointer, length) view. It exists as
+  a `stack` parameter: `fn sum(stack s: &[i32]) -> reg i32`. Pass `&a`, a
+  slice variable, or (for `&[u8]`) a string literal. A slice uses two argument
+  registers.
+* A call that borrows an array living in the current frame is an ordinary call,
+  not a tail jump, because the array dies with the frame. Borrowing a slice
+  parameter keeps the tail-call guarantee.
+* Strings are `[u8]` data; there is no special string type.
+
+## Standard library (stub)
+
+With `import std::io;`:
+
+    std::io::print_i32(n)       // decimal and newline
+    std::io::print(&[u8])       // bytes, no newline
+    std::io::println(&[u8])     // bytes and newline
+
+## `main` arguments
+
+    fn main(stack args: &[&[u8]]) -> reg i32
+
+`args[0]` is the program name. `args.len` is the count. An element can be
+passed on as an argument (`std::io::println(args[1])`) when the index is a
+constant or a variable. On Windows the command line is split on spaces and
+tabs with double quotes grouping; there are no backslash rules, and at most
+128 arguments are kept.
+
+## Implementation status (unreleased, after v0.1.0)
 
 Implemented:
 
-* Types: `i32` and C-style structs of `i32` fields and nested structs
-  (stored inline). Struct literals `P { x: 1, y: 2 }` initialize `stack` or
-  `heap` variables; fields are read and assigned with `.`.
+* Types: `i32`, structs of `i32` fields and nested structs (inline), arrays
+  `[i32; N]` / `[u8; N]`, slice parameters, string literals.
 * Variables: `reg`, `stack`, `heap`; `if`/`else`, `while`, assignment, calls,
   guaranteed tail calls.
-* `stack` values live in frame slots (a stack struct takes consecutive slots).
-* `heap` values are allocated by a tiny runtime and released at scope end,
-  before every `return`, and before a tail call jumps away.
-* `drop(x)` zero-fills and releases (all fields of a struct). Use after drop,
-  double drop, and dropping in only one branch of an `if` or inside a loop are
-  compile errors; a branch ending in `return` does not count for the merge.
-* Parameters and return values: `reg`, `stack` (copied into the callee) and
-  `heap` (the owner moves: the caller's variable cannot be used afterwards;
-  `-> heap T` hands ownership to the caller). Struct parameters and returns
-  must be `heap`.
-* `import` is enforced for `std::io::print_i32(n)` (prints a decimal and a
-  newline). This is a stand-in until slices exist.
-* `package` names mangle into assembler symbols.
+* `stack` values live in frame slots. `heap` values come from a tiny runtime
+  and are released at scope end, before every `return`, and before a tail
+  call jumps away.
+* `drop(x)` zero-fills and releases; use after drop, double drop, and
+  dropping in one branch of an `if` or inside a loop are compile errors.
+* Parameters and returns: `reg`, `stack` (copied) and `heap` (ownership moves).
+* `import` is enforced for the `std::io` functions above.
 
 Known limits (planned, not implemented):
 
-* Struct fields cannot have `heap` (recursive types); whole-struct copy,
-  move-by-assignment and `copy(x)`; the `secret` modifier.
-* Arrays, strings and slices; `main` arguments; the rest of the standard
-  library.
-* Importing user packages from other files (only the standard stub resolves).
-* Each heap value takes a whole page on Linux (`mmap`/`munmap`) and 16 bytes
-  from the process heap on Windows; a real allocator comes later.
-* A `reg` struct is rejected.
+* Struct `heap` fields (recursive types), whole-struct copy and move by
+  assignment, `copy(x)`, the `secret` modifier.
+* Arrays inside structs, arrays as parameters or return values, `&mut [T]`,
+  slices of slices other than `main`'s arguments, slice variables.
+* The rest of the standard library; importing user packages from other files.
+* Each heap value takes a whole page on Linux (`mmap`/`munmap`) and the
+  size you ask for from the process heap on Windows; a real allocator comes later.
+* A `reg` struct or array is rejected.
