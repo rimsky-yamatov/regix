@@ -11,7 +11,7 @@
 
 static void usage(FILE *f)
 {
-    fputs("usage: rgc [options] <file.rgx>\n"
+    fputs("usage: rgc [options] <file.rgx>...\n"
           "  -o <path>          output path (executable, or assembly with -S)\n"
           "  -S                 stop after writing assembly\n"
           "  --target <t>       linux-x64 | windows-x64 (default: host)\n"
@@ -83,7 +83,9 @@ static int ends_with(const char *s, const char *suffix)
 
 int main(int argc, char **argv)
 {
-    const char *input = NULL, *output = NULL;
+    const char *inputs[64];
+    int ninputs = 0;
+    const char *output = NULL;
     const Abi *abi = abi_host();
     int asm_only = 0, keep_asm = 0;
 
@@ -111,14 +113,14 @@ int main(int argc, char **argv)
             fprintf(stderr, "rgc: unknown option '%s'\n", a);
             usage(stderr);
             return 2;
-        } else if (!input) {
-            input = a;
+        } else if (ninputs < 64) {
+            inputs[ninputs++] = a;
         } else {
-            fprintf(stderr, "rgc: more than one input file\n");
+            fprintf(stderr, "rgc: too many input files\n");
             return 2;
         }
     }
-    if (!input) {
+    if (ninputs == 0) {
         usage(stderr);
         return 2;
     }
@@ -127,13 +129,17 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    char *src = read_file(input, NULL);
-    if (!src) {
-        fprintf(stderr, "rgc: cannot read '%s'\n", input);
-        return 1;
+    Program **files = xmalloc(sizeof(Program *) * (size_t)ninputs);
+    for (int i = 0; i < ninputs; i++) {
+        char *src = read_file(inputs[i], NULL);
+        if (!src) {
+            fprintf(stderr, "rgc: cannot read '%s'\n", inputs[i]);
+            return 1;
+        }
+        files[i] = parse_program(inputs[i], src);
     }
-
-    Program *prog = parse_program(input, src);
+    const char *input = inputs[0];
+    Program *prog = link_units(files, ninputs);
     if (check_program(prog, abi, 1) > 0)
         return 1;
 
