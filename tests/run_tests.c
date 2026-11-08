@@ -213,7 +213,7 @@ static void run_case(const char *rgc, const char *dir, const char *file)
 static void run_multi_case(const char *rgc, const char *dir, const char *dname)
 {
     char *sub = xsprintf("%s/%s", dir, dname);
-    char *name = xsprintf("multi/%.*s", (int)(strlen(dname) - 2), dname);
+    char *name = xsprintf("multi_%.*s", (int)(strlen(dname) - 2), dname);
     int n;
     char **files = list_dir(sub, ".rgx", &n);
     char *list = xstrdup("");
