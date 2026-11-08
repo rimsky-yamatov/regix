@@ -1,0 +1,5 @@
+// expect-error: slice variables are not supported
+fn main() -> reg i32 {
+    stack s: &[i32] = [1]
+    return(0)
+}
