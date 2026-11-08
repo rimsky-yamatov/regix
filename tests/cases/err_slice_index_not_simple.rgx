@@ -1,0 +1,11 @@
+// expect-error: must be a constant or variable
+import std::io;
+
+fn id(reg x: i32) -> reg i32 {
+    return(x)
+}
+
+fn main(stack args: &[&[u8]]) -> reg i32 {
+    std::io::println(args[id(0)])
+    return(0)
+}
