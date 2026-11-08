@@ -1,0 +1,4 @@
+// expect-error: is itself a slice
+fn main(stack args: &[&[u8]]) -> reg i32 {
+    return(args[0])
+}
