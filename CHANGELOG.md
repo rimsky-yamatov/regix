@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Arrays `[i32; N]` and `[u8; N]` (`stack` or `heap`) with literals, repeat
+  `[v; N]`, string-literal initialization, `a[i]`, `a.len`, bounds checks
+  (exit code 101) and byte-wise `drop`.
+- Slice parameters `&[T]` (borrowed, read-only), string literals as `&[u8]`.
+- `std::io::print` and `std::io::println` for byte slices.
+- `main` can take `stack args: &[&[u8]]` (Linux and Windows).
+- Tests: runner supports `// args:`; 141 cases.
+
 ## v0.1.0
 
 First release.
