@@ -1,0 +1,9 @@
+// expect-exit: 0
+// expect-stdout: ab12
+import std::io;
+
+fn main() -> void {
+    std::io::print("a")
+    std::io::print("b")
+    std::io::print_i32(12)
+}
