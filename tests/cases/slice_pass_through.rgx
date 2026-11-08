@@ -1,0 +1,13 @@
+// expect-exit: 7
+fn inner(stack s: &[i32]) -> reg i32 {
+    return(s[1])
+}
+
+fn outer(stack s: &[i32]) -> reg i32 {
+    return(inner(s))
+}
+
+fn main() -> reg i32 {
+    stack a: [i32; 2] = [3, 7]
+    return(outer(&a))
+}
