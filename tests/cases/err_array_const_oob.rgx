@@ -1,0 +1,5 @@
+// expect-error: out of bounds for an array of length 3
+fn main() -> reg i32 {
+    stack a: [i32; 3] = [1, 2, 3]
+    return(a[3])
+}
