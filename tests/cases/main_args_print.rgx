@@ -1,0 +1,9 @@
+// expect-exit: 0
+// expect-stdout: second
+// args: first second
+import std::io;
+
+fn main(stack args: &[&[u8]]) -> reg i32 {
+    std::io::println(args[2])
+    return(0)
+}
