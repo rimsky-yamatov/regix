@@ -1,7 +1,7 @@
 /*
  * Regix test runner (plain C, no scripting language needed).
  *
- *   run_tests <rgc> <cases-dir> [<rgfmt> <fmt-dir>]
+ *   run_tests <rgc> <cases-dir> [<rgfmt> <fmt-dir> [<multi-dir>]]
  *
  * Each .rgx file in the cases dir carries directives in `//` comments:
  *   // expect-exit: N       compile, run, and require exit code N
@@ -11,6 +11,8 @@
  *   // expect-gas: TEXT     `--target linux-x64 -S` output must contain TEXT
  *   // expect-masm: TEXT    `--target windows-x64 -S` output must contain TEXT
  *
+ * Each multi-dir/NAME.d is a directory of .rgx files compiled together; its
+ * main.rgx carries the directives.
  * Each fmt-dir/NAME.in is formatted by rgfmt and compared to NAME.out.
  */
 #include <stdio.h>
@@ -136,11 +138,12 @@ static int file_contains(const char *path, const char *text)
     return r;
 }
 
-static void run_case(const char *rgc, const char *dir, const char *file)
+/* `path` is the argument list for rgc (one or more files); directives are read
+ * from `directive_file`. */
+static void run_case_impl(const char *rgc, const char *name, const char *path,
+                          const char *directive_file)
 {
-    char *path = xsprintf("%s/%s", dir, file);
-    char *name = xstrndup(file, strlen(file) - 4);
-    char *src = read_file(path, NULL);
+    char *src = read_file(directive_file, NULL);
     if (!src) {
         report(name, 0, "cannot read case");
         return;
@@ -198,6 +201,28 @@ static void run_case(const char *rgc, const char *dir, const char *file)
     }
 }
 
+static void run_case(const char *rgc, const char *dir, const char *file)
+{
+    char *path = xsprintf("%s/%s", dir, file);
+    char *name = xstrndup(file, strlen(file) - 4);
+    run_case_impl(rgc, name, path, path);
+}
+
+/* A directory NAME.d holding several .rgx files that are compiled together;
+ * directives live in its main.rgx. */
+static void run_multi_case(const char *rgc, const char *dir, const char *dname)
+{
+    char *sub = xsprintf("%s/%s", dir, dname);
+    char *name = xsprintf("multi/%.*s", (int)(strlen(dname) - 2), dname);
+    int n;
+    char **files = list_dir(sub, ".rgx", &n);
+    char *list = xstrdup("");
+    for (int i = 0; i < n; i++)
+        list = xsprintf("%s%s%s/%s", list, i ? " " : "", sub, files[i]);
+    char *main_path = xsprintf("%s/main.rgx", sub);
+    run_case_impl(rgc, name, list, main_path);
+}
+
 static void run_fmt_case(const char *rgfmt, const char *dir, const char *file)
 {
     char *base = xstrndup(file, strlen(file) - 3); /* strip ".in" */
@@ -217,8 +242,8 @@ static void run_fmt_case(const char *rgfmt, const char *dir, const char *file)
 
 int main(int argc, char **argv)
 {
-    if (argc != 3 && argc != 5) {
-        fputs("usage: run_tests <rgc> <cases-dir> [<rgfmt> <fmt-dir>]\n", stderr);
+    if (argc != 3 && argc != 5 && argc != 6) {
+        fputs("usage: run_tests <rgc> <cases-dir> [<rgfmt> <fmt-dir> [<multi-dir>]]\n", stderr);
         return 2;
     }
 #ifdef _WIN32
@@ -232,7 +257,13 @@ int main(int argc, char **argv)
     char **cases = list_dir(argv[2], ".rgx", &n);
     for (int i = 0; i < n; i++)
         run_case(argv[1], argv[2], cases[i]);
-    if (argc == 5) {
+    if (argc == 6) {
+        int d;
+        char **dirs = list_dir(argv[5], ".d", &d);
+        for (int i = 0; i < d; i++)
+            run_multi_case(argv[1], argv[5], dirs[i]);
+    }
+    if (argc >= 5) {
         int m;
         char **fmts = list_dir(argv[4], ".in", &m);
         for (int i = 0; i < m; i++)

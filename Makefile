@@ -22,7 +22,7 @@ $(B)/run_tests: tests/run_tests.c common/util.c $(wildcard common/*.h) | $(B)
 	$(CC) $(CFLAGS) -Icommon -o $@ tests/run_tests.c common/util.c
 
 test: all
-	$(B)/run_tests $(B)/rgc tests/cases $(B)/rgfmt tests/fmt
+	$(B)/run_tests $(B)/rgc tests/cases $(B)/rgfmt tests/fmt tests/multi
 
 clean:
 	rm -rf $(B)
