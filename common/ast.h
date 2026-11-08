@@ -14,6 +14,8 @@ typedef enum { ST_NONE, ST_REG, ST_STACK, ST_HEAP } Storage;
 typedef enum { E_INT, E_VAR, E_NEG, E_BIN, E_CALL, E_FIELD, E_STRUCTLIT,
     E_STR, E_ARRAYLIT, E_ARRAYREP, E_INDEX, E_ADDR, E_LEN
 } ExprKind;
+enum { CP_NONE, CP_COPY, CP_MOVE };
+
 typedef enum { OP_ADD, OP_SUB, OP_MUL, OP_LT, OP_GT, OP_LE, OP_GE, OP_EQ, OP_NE } BinOp;
 typedef enum {
     S_DECL, S_ASSIGN, S_FASSIGN, S_IASSIGN, S_IF, S_WHILE, S_RETURN, S_EXPR, S_BLOCK, S_DROP
@@ -27,6 +29,8 @@ typedef struct StructDef StructDef;
 typedef struct Block {
     Stmt **stmts;
     int n, cap;
+    Stmt **wipe;     /* secret locals to clear at scope end (declaring statements) */
+    int nwipe, wipecap;
     int *rel;        /* frame slots of heap pointers to release at scope end */
     int nrel, relcap;
 } Block;
@@ -73,6 +77,12 @@ struct Stmt {
     int bslots;      /* S_DECL, S_DROP: frame slots of a stack value */
     int adopt;       /* S_DECL (heap): initializer is a call returning an owned heap value */
     ArrInfo arr;     /* S_DECL: array details */
+    int secret;      /* S_DECL: cleared at scope end; never copied */
+    int cpy;         /* S_DECL: CP_COPY or CP_MOVE when initialized from another variable */
+    Storage cst;     /* source variable storage for cpy */
+    int cidx, cbs;   /* source variable first slot and slot count for cpy */
+    Stmt **wipe;     /* S_RETURN: secret locals to clear before leaving */
+    int nwipe, wipecap;
     int *rel;        /* S_RETURN: heap slots to release before leaving */
     int nrel, relcap;
 };
