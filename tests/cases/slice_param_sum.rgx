@@ -1,0 +1,15 @@
+// expect-exit: 10
+fn sum(stack s: &[i32]) -> reg i32 {
+    reg i: i32 = 0
+    reg t: i32 = 0
+    while (i < s.len) {
+        t = t + s[i]
+        i = i + 1
+    }
+    return(t)
+}
+
+fn main() -> reg i32 {
+    stack a: [i32; 4] = [1, 2, 3, 4]
+    return(sum(&a))
+}
