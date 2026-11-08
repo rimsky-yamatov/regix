@@ -1,0 +1,11 @@
+import std::io;
+
+fn main(stack args: &[&[u8]]) -> reg i32 {
+    if (args.len < 2) {
+        std::io::println("usage: args <name>")
+        return(1)
+    }
+    std::io::print("hello, ")
+    std::io::println(args[1])
+    return(0)
+}
