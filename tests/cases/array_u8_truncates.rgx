@@ -1,0 +1,6 @@
+// expect-exit: 44
+fn main() -> reg i32 {
+    stack b: [u8; 2] = [0, 0]
+    b[0] = 300
+    return(b[0])
+}
