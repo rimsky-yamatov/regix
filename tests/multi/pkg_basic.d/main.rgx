@@ -1,0 +1,9 @@
+// expect-exit: 5
+// expect-stdout: 5
+import com::example::util;
+import std::io;
+
+fn main() -> reg i32 {
+    std::io::print_i32(com::example::util::add(2, 3))
+    return(com::example::util::add(2, 3))
+}

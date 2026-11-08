@@ -1,0 +1,5 @@
+package com::example::util;
+
+pub fn add(reg a: i32, reg b: i32) -> reg i32 {
+    return(a + b)
+}
