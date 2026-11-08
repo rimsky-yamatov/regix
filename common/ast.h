@@ -86,7 +86,9 @@ typedef struct {
     int line, col;
 } Field;
 
+typedef struct Program Program;
 struct StructDef {
+    Program *unit;   /* file the struct was declared in */
     char *name;
     Field *fields;
     int nfields, fcap;
@@ -109,6 +111,7 @@ typedef struct {
 } Param;
 
 struct Func {
+    Program *unit;   /* file (package, imports) the function belongs to */
     char *name;
     char *qname;     /* package::name, set by check */
     char *sym;       /* assembler symbol, set by check */
@@ -130,7 +133,7 @@ typedef struct {
     int len;
 } StrLit;
 
-typedef struct {
+typedef struct Program {
     const char *file;
     char *package;   /* "a::b" or NULL */
     char **imports;
@@ -139,6 +142,8 @@ typedef struct {
     int nfuncs, fcap;
     StructDef **structs;
     int nstructs, scap;
+    Program **units;  /* master program only: the linked source files */
+    int nunits;
     int uses_heap;   /* set by check: emit the heap runtime */
     int uses_print;  /* set by check: emit std::io::print_i32 */
     int uses_write;  /* set by check: emit std::io::print */
@@ -146,6 +151,6 @@ typedef struct {
     int uses_panic;  /* set by check: emit the bounds-check failure handler */
     StrLit *strs;    /* string literals passed as slices */
     int nstrs, strcap;
-} Program;
+};
 
 #endif
