@@ -1,0 +1,6 @@
+// expect-error: cannot assign a whole array or slice
+fn main() -> reg i32 {
+    stack a: [i32; 2] = [1, 2]
+    a = 5
+    return(0)
+}
