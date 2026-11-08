@@ -1,0 +1,11 @@
+package geo;
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+pub fn sum_xy(reg a: i32, reg b: i32) -> reg i32 {
+    stack p: Point = Point { x: a, y: b }
+    return(p.x + p.y)
+}

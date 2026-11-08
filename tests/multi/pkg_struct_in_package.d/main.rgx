@@ -1,0 +1,6 @@
+// expect-exit: 7
+import geo;
+
+fn main() -> reg i32 {
+    return(geo::sum_xy(3, 4))
+}
