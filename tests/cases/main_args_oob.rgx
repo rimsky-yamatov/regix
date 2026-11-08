@@ -1,0 +1,8 @@
+// expect-exit: 101
+import std::io;
+
+fn main(stack args: &[&[u8]]) -> reg i32 {
+    reg n: i32 = 5
+    std::io::println(args[n])
+    return(0)
+}
