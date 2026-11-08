@@ -1,0 +1,5 @@
+// expect-error: cannot be used as a value
+fn main() -> reg i32 {
+    stack a: [i32; 2] = [1, 2]
+    return(a)
+}
