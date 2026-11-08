@@ -1,0 +1,10 @@
+// expect-exit: 3
+// The array lives in main's frame, so the call cannot be a tail jump.
+fn total(stack s: &[i32]) -> reg i32 {
+    return(s[0] + s[1])
+}
+
+fn main() -> reg i32 {
+    stack a: [i32; 2] = [1, 2]
+    return(total(&a))
+}
