@@ -1,0 +1,16 @@
+// expect-exit: 45
+fn main() -> reg i32 {
+    stack a: [i32; 10] = [0; 10]
+    reg i: i32 = 0
+    while (i < a.len) {
+        a[i] = i
+        i = i + 1
+    }
+    reg sum: i32 = 0
+    i = 0
+    while (i < a.len) {
+        sum = sum + a[i]
+        i = i + 1
+    }
+    return(sum)
+}
