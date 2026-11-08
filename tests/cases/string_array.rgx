@@ -1,0 +1,5 @@
+// expect-exit: 72
+fn main() -> reg i32 {
+    stack s: [u8; 5] = "Hello"
+    return(s[0])
+}
