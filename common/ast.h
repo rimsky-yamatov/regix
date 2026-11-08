@@ -133,7 +133,7 @@ typedef struct {
     int len;
 } StrLit;
 
-typedef struct Program {
+struct Program {
     const char *file;
     char *package;   /* "a::b" or NULL */
     char **imports;
