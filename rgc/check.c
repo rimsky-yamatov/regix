@@ -20,7 +20,9 @@ typedef struct {
 } Local;
 
 typedef struct {
-    Program *prog;
+    Program *prog;      /* master program: all functions and structs */
+    Program *unit;      /* source file being checked (package, imports) */
+    const char *file;
     const Abi *abi;
     Func *fn;
     Local *loc;
@@ -43,7 +45,7 @@ static void err(Ctx *c, int line, int col, const char *fmt, ...)
     va_start(ap, fmt);
     vsnprintf(buf, sizeof buf, fmt, ap);
     va_end(ap);
-    rgx_error(c->prog->file, line, col, "%s", buf);
+    rgx_error(c->file, line, col, "%s", buf);
 }
 
 static char *mangle(Program *p, const char *name)
@@ -69,10 +71,20 @@ static char *mangle(Program *p, const char *name)
 
 /* ---- structs ---- */
 
-static StructDef *find_struct(Program *p, const char *name)
+static int same_pkg(const char *a, const char *b)
 {
+    if (!a || !b)
+        return a == b;
+    return strcmp(a, b) == 0;
+}
+
+/* Structs are visible inside their own package only. */
+static StructDef *find_struct(Ctx *c, const char *name)
+{
+    Program *p = c->prog;
     for (int i = 0; i < p->nstructs; i++)
-        if (strcmp(p->structs[i]->name, name) == 0)
+        if (strcmp(p->structs[i]->name, name) == 0 &&
+            same_pkg(p->structs[i]->unit->package, c->unit->package))
             return p->structs[i];
     return NULL;
 }
@@ -85,7 +97,20 @@ static Field *find_field(StructDef *sd, const char *name)
     return NULL;
 }
 
+static void layout_struct_inner(Ctx *c, StructDef *sd);
+
 static void layout_struct(Ctx *c, StructDef *sd)
+{
+    Program *saved_unit = c->unit;
+    const char *saved_file = c->file;
+    c->unit = sd->unit;
+    c->file = sd->unit->file;
+    layout_struct_inner(c, sd);
+    c->unit = saved_unit;
+    c->file = saved_file;
+}
+
+static void layout_struct_inner(Ctx *c, StructDef *sd)
 {
     if (sd->state == 2)
         return;
@@ -106,7 +131,7 @@ static void layout_struct(Ctx *c, StructDef *sd)
                     f->name, sd->name);
         f->offset = off;
         if (f->ty == TY_STRUCT) {
-            f->sdef = find_struct(c->prog, f->tyname);
+            f->sdef = find_struct(c, f->tyname);
             if (!f->sdef) {
                 err(c, f->line, f->col, "unknown type '%s'", f->tyname);
                 off += 4;
@@ -124,26 +149,41 @@ static void layout_struct(Ctx *c, StructDef *sd)
 
 /* ---- functions ---- */
 
-static int imported(Program *p, const char *module)
+static int imported(Program *unit, const char *module)
 {
-    for (int i = 0; i < p->nimports; i++)
-        if (strcmp(p->imports[i], module) == 0)
+    for (int i = 0; i < unit->nimports; i++)
+        if (strcmp(unit->imports[i], module) == 0)
             return 1;
     return 0;
 }
 
+/* Unqualified names resolve inside the current package; qualified names
+ * (a::b::f) need the package to be imported and the function to be pub. */
 static Func *find_func(Ctx *c, Expr *e)
 {
     Program *p = c->prog;
+    int qualified = strstr(e->name, "::") != NULL;
     for (int i = 0; i < p->nfuncs; i++) {
         Func *f = p->funcs[i];
-        if (strcmp(f->name, e->name) == 0 || strcmp(f->qname, e->name) == 0)
-            return f;
+        int match = qualified ? strcmp(f->qname, e->name) == 0
+                              : (strcmp(f->name, e->name) == 0 &&
+                                 same_pkg(f->unit->package, c->unit->package));
+        if (!match)
+            continue;
+        if (!same_pkg(f->unit->package, c->unit->package)) {
+            if (!imported(c->unit, f->unit->package))
+                err(c, e->line, e->col, "package '%s' is not imported (add 'import %s;')",
+                    f->unit->package, f->unit->package);
+            if (!f->is_pub)
+                err(c, e->line, e->col, "function '%s' is not public in package '%s'",
+                    f->name, f->unit->package);
+        }
+        return f;
     }
     for (int i = 0; i < N_BUILTINS; i++) {
         if (strcmp(e->name, builtins[i].qname) != 0)
             continue;
-        if (!imported(p, "std::io"))
+        if (!imported(c->unit, "std::io"))
             err(c, e->line, e->col, "'std::io' is not imported (add 'import std::io;')");
         if (i == B_PRINT_I32)
             p->uses_print = 1;
@@ -649,7 +689,7 @@ static void check_decl(Ctx *c, Stmt *s)
 {
     StructDef *sd = NULL;
     if (s->ty == TY_STRUCT) {
-        sd = find_struct(c->prog, s->tyname);
+        sd = find_struct(c, s->tyname);
         if (!sd)
             err(c, s->line, s->col, "unknown type '%s'", s->tyname);
     }
@@ -886,12 +926,14 @@ static void check_block(Ctx *c, Block *b)
 static void check_func(Ctx *c, Func *f)
 {
     c->fn = f;
+    c->unit = f->unit;
+    c->file = f->unit->file;
     c->n = 0;
     c->nreg = c->maxreg = c->nslot = c->maxslot = 0;
     c->heap_ok = 0;
 
     if (f->ret_ty == TY_STRUCT) {
-        f->ret_sdef = find_struct(c->prog, f->ret_tyname);
+        f->ret_sdef = find_struct(c, f->ret_tyname);
         if (!f->ret_sdef)
             err(c, f->line, f->col, "unknown type '%s'", f->ret_tyname);
         if (f->ret_storage != ST_HEAP)
@@ -902,7 +944,7 @@ static void check_func(Ctx *c, Func *f)
     for (int i = 0; i < f->nparams; i++) {
         Param *p = &f->params[i];
         if (p->ty == TY_STRUCT) {
-            p->sdef = find_struct(c->prog, p->tyname);
+            p->sdef = find_struct(c, p->tyname);
             if (!p->sdef)
                 err(c, p->line, p->col, "unknown type '%s'", p->tyname);
             if (p->storage != ST_HEAP)
@@ -950,44 +992,90 @@ static int is_args_param(const Param *p)
            p->arr.elem2 == TY_U8;
 }
 
+Program *link_units(Program **files, int n)
+{
+    Program *m = xcalloc(sizeof *m);
+    m->file = files[0]->file;
+    m->units = files;
+    m->nunits = n;
+    for (int u = 0; u < n; u++) {
+        for (int i = 0; i < files[u]->nfuncs; i++) {
+            files[u]->funcs[i]->unit = files[u];
+            VEC_PUSH(m->funcs, m->nfuncs, m->fcap, files[u]->funcs[i]);
+        }
+        for (int i = 0; i < files[u]->nstructs; i++) {
+            files[u]->structs[i]->unit = files[u];
+            VEC_PUSH(m->structs, m->nstructs, m->scap, files[u]->structs[i]);
+        }
+    }
+    return m;
+}
+
 int check_program(Program *prog, const Abi *abi, int require_main)
 {
     Ctx c;
     memset(&c, 0, sizeof c);
     c.prog = prog;
     c.abi = abi;
+    c.unit = prog->units[0];
+    c.file = c.unit->file;
     int before = rgx_nerrors;
 
     init_builtin(B_PRINT_I32, "print_i32", TY_I32);
     init_builtin(B_PRINT, "print", TY_SLICE);
     init_builtin(B_PRINTLN, "println", TY_SLICE);
 
-    for (int i = 0; i < prog->nstructs; i++)
+    /* imports must name a package that exists (or the standard module) */
+    for (int u = 0; u < prog->nunits; u++) {
+        Program *un = prog->units[u];
+        c.unit = un;
+        c.file = un->file;
+        for (int i = 0; i < un->nimports; i++) {
+            const char *im = un->imports[i];
+            int found = strcmp(im, "std::io") == 0;
+            for (int k = 0; k < prog->nunits && !found; k++)
+                found = prog->units[k]->package && strcmp(prog->units[k]->package, im) == 0;
+            if (!found)
+                err(&c, 1, 1, "package '%s' not found", im);
+        }
+    }
+
+    for (int i = 0; i < prog->nstructs; i++) {
+        StructDef *si = prog->structs[i];
+        c.unit = si->unit;
+        c.file = si->unit->file;
         for (int j = 0; j < i; j++)
-            if (strcmp(prog->structs[j]->name, prog->structs[i]->name) == 0)
-                err(&c, prog->structs[i]->line, prog->structs[i]->col,
-                    "struct '%s' is defined twice", prog->structs[i]->name);
+            if (strcmp(prog->structs[j]->name, si->name) == 0 &&
+                same_pkg(prog->structs[j]->unit->package, si->unit->package))
+                err(&c, si->line, si->col, "struct '%s' is defined twice", si->name);
+    }
     for (int i = 0; i < prog->nstructs; i++)
         layout_struct(&c, prog->structs[i]);
 
     for (int i = 0; i < prog->nfuncs; i++) {
         Func *f = prog->funcs[i];
-        f->qname = prog->package ? xsprintf("%s::%s", prog->package, f->name) : xstrdup(f->name);
-        f->sym = mangle(prog, f->name);
+        const char *pkg = f->unit->package;
+        c.unit = f->unit;
+        c.file = f->unit->file;
+        f->qname = pkg ? xsprintf("%s::%s", pkg, f->name) : xstrdup(f->name);
+        f->sym = mangle(f->unit, f->name);
         for (int j = 0; j < i; j++)
-            if (strcmp(prog->funcs[j]->name, f->name) == 0)
+            if (strcmp(prog->funcs[j]->name, f->name) == 0 &&
+                same_pkg(prog->funcs[j]->unit->package, pkg))
                 err(&c, f->line, f->col, "function '%s' is defined twice", f->name);
     }
     /* resolve signatures first so calls may refer to later functions */
     for (int i = 0; i < prog->nfuncs; i++) {
         Func *f = prog->funcs[i];
+        c.unit = f->unit;
+        c.file = f->unit->file;
         if (f->ret_ty == TY_STRUCT)
-            f->ret_sdef = find_struct(prog, f->ret_tyname);
+            f->ret_sdef = find_struct(&c, f->ret_tyname);
         int areg = 0;
         for (int j = 0; j < f->nparams; j++) {
             Param *p = &f->params[j];
             if (p->ty == TY_STRUCT)
-                p->sdef = find_struct(prog, p->tyname);
+                p->sdef = find_struct(&c, p->tyname);
             p->areg = areg;
             areg += p->ty == TY_SLICE ? 2 : 1;
         }
@@ -997,12 +1085,21 @@ int check_program(Program *prog, const Abi *abi, int require_main)
 
     if (require_main) {
         Func *m = NULL;
+        int count = 0;
         for (int i = 0; i < prog->nfuncs; i++)
-            if (strcmp(prog->funcs[i]->name, "main") == 0)
+            if (strcmp(prog->funcs[i]->name, "main") == 0) {
                 m = prog->funcs[i];
+                count++;
+            }
+        c.unit = prog->units[0];
+        c.file = c.unit->file;
         if (!m) {
             err(&c, 1, 1, "no 'main' function");
+        } else if (count > 1) {
+            err(&c, m->line, m->col, "more than one 'main' function");
         } else {
+            c.unit = m->unit;
+            c.file = m->unit->file;
             if (m->nparams > 1 || (m->nparams == 1 && !is_args_param(&m->params[0])))
                 err(&c, m->line, m->col,
                     "'main' takes no parameters or one: 'stack args: &[&[u8]]'");

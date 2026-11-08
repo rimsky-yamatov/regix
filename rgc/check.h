@@ -3,8 +3,13 @@
 #include "abi.h"
 #include "ast.h"
 
+/* Combine parsed source files into one program (functions and structs are
+ * tagged with their file). The files array must outlive the result. */
+Program *link_units(Program **files, int n);
+
 /* Resolve names, check types and storage rules, assign register slots.
- * Returns the number of errors reported. */
+ * `prog` comes from link_units. Returns the number of errors reported.
+ * Exactly one `main` must exist across all files. */
 int check_program(Program *prog, const Abi *abi, int require_main);
 
 #endif
