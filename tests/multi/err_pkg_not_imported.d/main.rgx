@@ -1,0 +1,4 @@
+// expect-error: package 'util' is not imported
+fn main() -> reg i32 {
+    return(util::one())
+}
