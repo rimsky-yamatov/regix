@@ -1,0 +1,6 @@
+// expect-error: undefined function 'one'
+import util;
+
+fn main() -> reg i32 {
+    return(one())
+}

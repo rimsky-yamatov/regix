@@ -1,0 +1,5 @@
+package util;
+
+pub fn one() -> reg i32 {
+    return(1)
+}
