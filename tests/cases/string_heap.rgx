@@ -1,0 +1,5 @@
+// expect-exit: 111
+fn main() -> reg i32 {
+    heap s: [u8; 5] = "Hello"
+    return(s[4])
+}
