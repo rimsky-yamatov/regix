@@ -1,0 +1,6 @@
+// expect-error: package 'nowhere' not found
+import nowhere;
+
+fn main() -> reg i32 {
+    return(0)
+}
