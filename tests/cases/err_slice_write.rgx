@@ -1,0 +1,10 @@
+// expect-error: slices are read-only
+fn f(stack s: &[i32]) -> reg i32 {
+    s[0] = 1
+    return(0)
+}
+
+fn main() -> reg i32 {
+    stack a: [i32; 1] = [0]
+    return(f(&a))
+}
