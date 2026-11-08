@@ -1,0 +1,5 @@
+// expect-error: cannot be 'reg'
+fn main() -> reg i32 {
+    reg a: [i32; 2] = [1, 2]
+    return(0)
+}
