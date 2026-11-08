@@ -1,0 +1,9 @@
+// expect-error: type mismatch for slice parameter
+fn f(stack s: &[u8]) -> reg i32 {
+    return(0)
+}
+
+fn main() -> reg i32 {
+    stack a: [i32; 1] = [0]
+    return(f(&a))
+}
