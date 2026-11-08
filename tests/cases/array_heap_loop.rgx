@@ -1,0 +1,9 @@
+// expect-exit: 5
+fn main() -> reg i32 {
+    reg i: i32 = 0
+    while (i < 20000) {
+        heap t: [u8; 64] = [7; 64]
+        i = i + 1
+    }
+    return(5)
+}
