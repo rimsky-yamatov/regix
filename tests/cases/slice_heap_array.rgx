@@ -1,0 +1,9 @@
+// expect-exit: 6
+fn first_two(stack s: &[i32]) -> reg i32 {
+    return(s[0] + s[1])
+}
+
+fn main() -> reg i32 {
+    heap a: [i32; 3] = [2, 4, 9]
+    return(first_two(&a))
+}
