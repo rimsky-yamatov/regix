@@ -1,0 +1,6 @@
+// expect-exit: 14
+package app;
+
+fn main() -> reg i32 {
+    return(twice(7))
+}
