@@ -1,0 +1,5 @@
+// expect-error: unsupported element type
+fn main() -> reg i32 {
+    stack a: [i64; 2] = [1, 2]
+    return(0)
+}
