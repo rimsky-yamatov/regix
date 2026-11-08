@@ -1,0 +1,11 @@
+// expect-exit: 9
+fn id(reg x: i32) -> reg i32 {
+    return(x)
+}
+
+fn main() -> reg i32 {
+    stack a: [i32; 3] = [0, 0, 0]
+    reg i: i32 = 2
+    a[i] = id(4) + id(5)
+    return(a[2])
+}
