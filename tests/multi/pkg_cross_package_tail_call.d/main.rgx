@@ -1,0 +1,7 @@
+// expect-exit: 1
+// A million tail calls across two packages must not overflow the stack.
+import ping;
+
+fn main() -> reg i32 {
+    return(ping::even(1000000))
+}

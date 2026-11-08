@@ -1,0 +1,8 @@
+package pong;
+
+import ping;
+
+pub fn odd(reg n: i32) -> reg i32 {
+    if (n == 0) { return(0) }
+    return(ping::even(n - 1))
+}
