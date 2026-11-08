@@ -1,0 +1,9 @@
+// expect-exit: 101
+fn get(stack s: &[i32], reg i: i32) -> reg i32 {
+    return(s[i])
+}
+
+fn main() -> reg i32 {
+    stack a: [i32; 2] = [1, 2]
+    return(get(&a, 2))
+}
