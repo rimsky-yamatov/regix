@@ -1,0 +1,6 @@
+// expect-error: can only be passed as a call argument
+fn main() -> reg i32 {
+    stack a: [i32; 1] = [0]
+    reg x: i32 = &a
+    return(0)
+}
