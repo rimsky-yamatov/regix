@@ -1,0 +1,4 @@
+// expect-error: more than one 'main' function
+fn main() -> reg i32 {
+    return(0)
+}

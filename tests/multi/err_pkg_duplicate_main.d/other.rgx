@@ -1,0 +1,5 @@
+package other;
+
+fn main() -> reg i32 {
+    return(1)
+}
