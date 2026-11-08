@@ -6,24 +6,29 @@
 #include "util.h"
 
 /*
- * Code generation strategy (v0.1)
+ * Code generation strategy (v0.2)
  *
  *  - 'reg' variables live in callee-saved registers for their whole scope.
  *    Nothing is ever spilled.
  *  - 'stack' variables live in 8-byte frame slots below rbp. A stack struct
- *    occupies consecutive slots; its bytes start at the lowest address.
+ *    or array occupies consecutive slots; its bytes start at the lowest
+ *    address. A slice parameter takes two slots (pointer, length).
  *  - 'heap' variables keep a pointer in an 8-byte slot; the value is
  *    allocated by the runtime (rgx_rt_alloc, size in r10d) and released at
  *    scope end, before any return, or by drop(). A heap value can be moved
  *    into a 'heap' parameter or out through a '-> heap' return.
+ *  - A slice argument uses two argument registers (pointer, length).
+ *  - Indexing is bounds checked; failure jumps to rgx_rt_panic (exit 101).
  *  - eax / r10 / r11 are compiler scratch registers. Temporaries that must
  *    survive a nested call are pushed on the machine stack; that is a
  *    compiler-internal detail, not a Regix variable.
- *  - `return(f(...))` always becomes a jump (guaranteed tail call).
+ *  - `return(f(...))` becomes a jump (guaranteed tail call), except when an
+ *    argument borrows an array that lives in the current frame.
  */
 
 static FILE *out;
 static const Abi *abi;
+static Program *prog_g;
 static Func *fn;
 static int label_seq;
 static int cur_push;  /* 8-byte temporaries currently pushed */
@@ -56,13 +61,20 @@ static void emit_jump(const char *op, int label)
     emit("%s %s", op, buf);
 }
 
+static int esz(Ty e) { return e == TY_I32 ? 4 : (e == TY_U8 ? 1 : 16); }
+
 /* ---- operands ---- */
 
-/* Memory operand for `off` bytes into a stack value occupying `bslots` slots
- * that start at slot `idx`. */
+/* Memory operand `off` bytes into a stack value occupying `bslots` slots that
+ * start at slot `idx`. */
+static void mem_at(char *buf, size_t sz, const char *kw, int idx, int bslots, int off)
+{
+    snprintf(buf, sz, "%s PTR [rbp-%d]", kw, 8 * (idx + bslots) - off);
+}
+
 static void dword_at(char *buf, size_t sz, int idx, int bslots, int off)
 {
-    snprintf(buf, sz, "DWORD PTR [rbp-%d]", 8 * (idx + bslots) - off);
+    mem_at(buf, sz, "DWORD", idx, bslots, off);
 }
 
 static void qword_slot(char *buf, size_t sz, int idx)
@@ -70,13 +82,23 @@ static void qword_slot(char *buf, size_t sz, int idx)
     snprintf(buf, sz, "QWORD PTR [rbp-%d]", 8 * (idx + 1));
 }
 
-/* "DWORD PTR [base+off]" */
-static void dword_via(char *buf, size_t sz, const char *base, int off)
+/* Second slot of a slice: its length. */
+static void len_slot(char *buf, size_t sz, const char *kw, int idx)
+{
+    snprintf(buf, sz, "%s PTR [rbp-%d]", kw, 8 * (idx + 2));
+}
+
+static void mem_via(char *buf, size_t sz, const char *kw, const char *base, int off)
 {
     if (off)
-        snprintf(buf, sz, "DWORD PTR [%s+%d]", base, off);
+        snprintf(buf, sz, "%s PTR [%s+%d]", kw, base, off);
     else
-        snprintf(buf, sz, "DWORD PTR [%s]", base);
+        snprintf(buf, sz, "%s PTR [%s]", kw, base);
+}
+
+static void dword_via(char *buf, size_t sz, const char *base, int off)
+{
+    mem_via(buf, sz, "DWORD", base, off);
 }
 
 static int is_var_like(Expr *e) { return e->kind == E_VAR || e->kind == E_FIELD; }
@@ -106,37 +128,125 @@ static int is_reg_or_imm(Expr *e)
 
 static void gen_expr(Expr *e);
 
+/* ---- arrays and slices ---- */
+
+/* Load the address of element 0 of the array or slice `e` refers to. */
+static void load_base(const char *reg, Expr *e)
+{
+    char slot[48];
+    if (e->vty == TY_ARRAY && e->vst == ST_STACK) {
+        emit("lea %s, [rbp-%d]", reg, 8 * (e->reg + e->bslots));
+    } else {
+        qword_slot(slot, sizeof slot, e->reg);   /* heap pointer, or slice pointer */
+        emit("mov %s, %s", reg, slot);
+    }
+}
+
+/* eax holds an index: panic unless it is below the length. */
+static void bounds_check(Expr *e)
+{
+    char len[48];
+    if (e->vty == TY_SLICE) {
+        len_slot(len, sizeof len, "DWORD", e->reg);
+        emit("cmp eax, %s", len);
+    } else {
+        emit("cmp eax, %d", e->ai.alen);
+    }
+    emit("jae rgx_rt_panic");
+}
+
+static void gen_index_prep(Expr *e)
+{
+    gen_expr(e->r);
+    bounds_check(e);
+    load_base("r11", e);
+}
+
 /* ---- calls ---- */
 
-static int heap_param(Expr *call, int i)
+enum { A_COMPLEX, A_SIMPLE, A_HEAP, A_SLICE };
+
+static int arg_kind(Expr *call, int i)
 {
-    return i < call->callee->nparams && call->callee->params[i].storage == ST_HEAP;
+    Param *p = &call->callee->params[i];
+    if (p->ty == TY_SLICE)
+        return A_SLICE;
+    if (p->storage == ST_HEAP)
+        return A_HEAP;
+    return is_simple(call->args[i]) ? A_SIMPLE : A_COMPLEX;
+}
+
+static void set_slice_regs(Expr *a, int ar)
+{
+    char buf[64], len[64];
+    const char *ptr = abi->arg64[ar];
+    switch (a->kind) {
+    case E_STR:
+        if (abi->windows)
+            emit("lea %s, rgx_str%ld", ptr, a->val);
+        else
+            emit("lea %s, [rip+.Lstr%ld]", ptr, a->val);
+        emit("mov %s, %d", abi->arg32[ar + 1], prog_g->strs[a->val].len);
+        break;
+    case E_ADDR:
+        if (a->vty == TY_SLICE) {
+            qword_slot(buf, sizeof buf, a->reg);
+            len_slot(len, sizeof len, "QWORD", a->reg);
+            emit("mov %s, %s", ptr, buf);
+            emit("mov %s, %s", abi->arg64[ar + 1], len);
+        } else {
+            load_base(ptr, a);
+            emit("mov %s, %d", abi->arg32[ar + 1], a->ai.alen);
+        }
+        break;
+    case E_INDEX: /* an element of an &[&[u8]] */
+        operand(a->r, buf, sizeof buf);
+        emit("mov eax, %s", buf);
+        bounds_check(a);
+        qword_slot(buf, sizeof buf, a->reg);
+        emit("mov r11, %s", buf);
+        emit("shl rax, 4");
+        emit("mov %s, QWORD PTR [r11+rax]", ptr);
+        emit("mov %s, QWORD PTR [r11+rax+8]", abi->arg64[ar + 1]);
+        break;
+    default:
+        break;
+    }
 }
 
 static void setup_args(Expr *call)
 {
     int n = call->nargs;
-    char buf[48];
+    char buf[64];
     for (int i = 0; i < n; i++) {
-        if (!heap_param(call, i) && !is_simple(call->args[i])) {
+        if (arg_kind(call, i) == A_COMPLEX) {
             gen_expr(call->args[i]);
             emit("push rax");
             cur_push++;
         }
     }
     for (int i = n - 1; i >= 0; i--) {
-        if (!heap_param(call, i) && !is_simple(call->args[i])) {
-            emit("pop %s", abi->arg64[i]);
+        if (arg_kind(call, i) == A_COMPLEX) {
+            emit("pop %s", abi->arg64[call->callee->params[i].areg]);
             cur_push--;
         }
     }
     for (int i = 0; i < n; i++) {
-        if (heap_param(call, i)) {
+        int ar = call->callee->params[i].areg;
+        switch (arg_kind(call, i)) {
+        case A_HEAP:
             qword_slot(buf, sizeof buf, call->args[i]->reg);
-            emit("mov %s, %s", abi->arg64[i], buf);
-        } else if (is_simple(call->args[i])) {
+            emit("mov %s, %s", abi->arg64[ar], buf);
+            break;
+        case A_SIMPLE:
             operand(call->args[i], buf, sizeof buf);
-            emit("mov %s, %s", abi->arg32[i], buf);
+            emit("mov %s, %s", abi->arg32[ar], buf);
+            break;
+        case A_SLICE:
+            set_slice_regs(call->args[i], ar);
+            break;
+        default:
+            break;
         }
     }
 }
@@ -156,7 +266,7 @@ static void gen_call(Expr *e)
 
 static void gen_bin(Expr *e)
 {
-    char buf[48];
+    char buf[64];
     const char *rhs;
     int imm = 0;
 
@@ -212,7 +322,7 @@ static void gen_bin(Expr *e)
 
 static void gen_expr(Expr *e)
 {
-    char buf[48], slot[48];
+    char buf[64], slot[64];
     switch (e->kind) {
     case E_INT: emit("mov eax, %ld", e->val); break;
     case E_VAR:
@@ -227,43 +337,67 @@ static void gen_expr(Expr *e)
             emit("mov eax, %s", buf);
         }
         break;
+    case E_INDEX:
+        gen_index_prep(e);
+        if (e->ai.elem == TY_U8)
+            emit("movzx eax, BYTE PTR [r11+rax]");
+        else
+            emit("mov eax, DWORD PTR [r11+rax*4]");
+        break;
+    case E_LEN:
+        if (e->vty == TY_SLICE) {
+            len_slot(buf, sizeof buf, "DWORD", e->reg);
+            emit("mov eax, %s", buf);
+        } else {
+            emit("mov eax, %d", e->ai.alen);
+        }
+        break;
     case E_NEG:
         gen_expr(e->l);
         emit("neg eax");
         break;
     case E_BIN: gen_bin(e); break;
     case E_CALL: gen_call(e); break;
-    case E_STRUCTLIT: break; /* only valid as an initializer */
+    default: break; /* literals and borrows are handled by their context */
     }
 }
 
 /* ---- stores ---- */
 
-/* Store expression `e` at byte `off` of a stack or heap value. */
-static void gen_store_mem(Storage st, int idx, int bslots, int off, Expr *e)
+/* Store expression `e` (esz bytes) at byte `off` of a stack or heap value. */
+static void gen_store_elem(Storage st, int idx, int bslots, int off, int size, Expr *e)
 {
-    char buf[48], mem[48], slot[48];
+    char buf[64], mem[64], slot[64];
+    const char *kw = size == 1 ? "BYTE" : "DWORD";
+    const char *src = size == 1 ? "al" : "eax";
     if (st == ST_STACK) {
-        dword_at(mem, sizeof mem, idx, bslots, off);
-        if (is_reg_or_imm(e)) {
+        mem_at(mem, sizeof mem, kw, idx, bslots, off);
+        if (e->kind == E_INT) {
+            emit("mov %s, %ld", mem, size == 1 ? (e->val & 255) : e->val);
+        } else if (size == 4 && is_reg_or_imm(e)) {
             operand(e, buf, sizeof buf);
             emit("mov %s, %s", mem, buf);
         } else {
             gen_expr(e);
-            emit("mov %s, eax", mem);
+            emit("mov %s, %s", mem, src);
         }
     } else {
         gen_expr(e);
         qword_slot(slot, sizeof slot, idx);
         emit("mov r11, %s", slot);
-        dword_via(mem, sizeof mem, "r11", off);
-        emit("mov %s, eax", mem);
+        mem_via(mem, sizeof mem, kw, "r11", off);
+        emit("mov %s, %s", mem, src);
     }
+}
+
+static void gen_store_mem(Storage st, int idx, int bslots, int off, Expr *e)
+{
+    gen_store_elem(st, idx, bslots, off, 4, e);
 }
 
 static void gen_store_var(Storage st, int idx, Expr *e)
 {
-    char buf[48];
+    char buf[64];
     if (st == ST_REG) {
         if (is_simple(e)) {
             operand(e, buf, sizeof buf);
@@ -299,17 +433,60 @@ static void gen_struct_init(Storage st, int idx, int bslots, StructDef *sd, Expr
 
 static void gen_alloc(int size, int slot_idx)
 {
-    char slot[48];
+    char slot[64];
     emit("mov r10d, %d", size);
     emit("call rgx_rt_alloc");       /* r10 = new zeroed block; other registers kept */
     qword_slot(slot, sizeof slot, slot_idx);
     emit("mov %s, r10", slot);
 }
 
+/* r10 = base address of the array being initialized. */
+static void load_array_base(Stmt *s)
+{
+    char slot[64];
+    if (s->storage == ST_STACK) {
+        emit("lea r10, [rbp-%d]", 8 * (s->reg + s->bslots));
+    } else {
+        qword_slot(slot, sizeof slot, s->reg);
+        emit("mov r10, %s", slot);
+    }
+}
+
+static void gen_array_init(Stmt *s)
+{
+    Expr *x = s->expr;
+    int sz = esz(s->arr.elem);
+    if (s->storage == ST_HEAP)
+        gen_alloc(s->size, s->reg);
+    if (x->kind == E_ARRAYLIT) {
+        for (int i = 0; i < x->nargs; i++)
+            gen_store_elem(s->storage, s->reg, s->bslots, i * sz, sz, x->args[i]);
+    } else if (x->kind == E_STR) {
+        if (x->slen > 0)
+            load_array_base(s);
+        for (int i = 0; i < x->slen; i++)
+            emit("mov BYTE PTR [r10+%d], %d", i, (unsigned char)x->sval[i]);
+    } else { /* E_ARRAYREP */
+        int l_loop = label_seq++;
+        gen_expr(x->l);
+        load_array_base(s);
+        emit("mov r11d, %ld", x->val);
+        label_def(l_loop);
+        if (sz == 1)
+            emit("mov BYTE PTR [r10+r11-1], al");
+        else
+            emit("mov DWORD PTR [r10+r11*4-4], eax");
+        emit("dec r11d");
+        emit_jump("jnz", l_loop);
+    }
+}
+
 static void gen_decl(Stmt *s)
 {
-    char slot[48];
-    if (s->storage == ST_HEAP) {
+    char slot[64];
+    if (s->ty == TY_ARRAY) {
+        gen_array_init(s);
+    } else if (s->storage == ST_HEAP) {
         if (s->adopt) {
             gen_expr(s->expr);       /* callee returns an owned pointer in rax */
             qword_slot(slot, sizeof slot, s->reg);
@@ -331,7 +508,7 @@ static void gen_decl(Stmt *s)
 
 static void gen_release(const int *rel, int n)
 {
-    char slot[48];
+    char slot[64];
     for (int i = n - 1; i >= 0; i--) {
         qword_slot(slot, sizeof slot, rel[i]);
         emit("mov r10, %s", slot);
@@ -341,7 +518,19 @@ static void gen_release(const int *rel, int n)
 
 static void gen_drop(Stmt *s)
 {
-    char slot[48], mem[48];
+    char slot[64], mem[64];
+    if (s->ty == TY_ARRAY) {
+        int l_loop = label_seq++;
+        load_array_base(s);
+        emit("mov r11d, %d", s->size);
+        label_def(l_loop);
+        emit("mov BYTE PTR [r10+r11-1], 0");
+        emit("dec r11d");
+        emit_jump("jnz", l_loop);
+        if (s->storage == ST_HEAP)
+            emit("call rgx_rt_free");
+        return;
+    }
     switch (s->storage) {
     case ST_REG:
         emit("xor %s, %s", abi->pool32[s->reg], abi->pool32[s->reg]);
@@ -378,6 +567,30 @@ static void gen_epilogue(void)
 
 static void gen_block(Block *b);
 
+static void gen_index_assign(Stmt *s)
+{
+    Expr *lhs = s->lhs;
+    int byte = lhs->ai.elem == TY_U8;
+    if (s->expr->kind == E_INT) {
+        gen_index_prep(lhs);
+        if (byte)
+            emit("mov BYTE PTR [r11+rax], %ld", s->expr->val & 255);
+        else
+            emit("mov DWORD PTR [r11+rax*4], %ld", s->expr->val);
+        return;
+    }
+    gen_expr(s->expr);
+    emit("push rax");
+    cur_push++;
+    gen_index_prep(lhs);
+    cur_push--;
+    emit("pop r10");
+    if (byte)
+        emit("mov BYTE PTR [r11+rax], r10b");
+    else
+        emit("mov DWORD PTR [r11+rax*4], r10d");
+}
+
 static void gen_stmt(Stmt *s)
 {
     switch (s->kind) {
@@ -389,6 +602,9 @@ static void gen_stmt(Stmt *s)
         break;
     case S_FASSIGN:
         gen_store_mem(s->lhs->vst, s->lhs->reg, s->lhs->bslots, s->lhs->foff, s->expr);
+        break;
+    case S_IASSIGN:
+        gen_index_assign(s);
         break;
     case S_DROP:
         gen_drop(s);
@@ -422,7 +638,7 @@ static void gen_stmt(Stmt *s)
         break;
     }
     case S_RETURN:
-        if (s->expr && s->expr->kind == E_CALL) {
+        if (s->expr && s->expr->kind == E_CALL && !s->expr->notail) {
             /* guaranteed tail call: arguments first, then release, then jump */
             setup_args(s->expr);
             gen_release(s->rel, s->nrel);
@@ -433,8 +649,8 @@ static void gen_stmt(Stmt *s)
                 emit("jmp %s", s->expr->callee->sym);
             }
         } else {
-            if (s->expr && fn->ret_storage == ST_HEAP) {
-                char slot[48];       /* move the owned pointer out */
+            if (s->expr && fn->ret_storage == ST_HEAP && s->expr->kind == E_VAR) {
+                char slot[64];       /* move the owned pointer out */
                 qword_slot(slot, sizeof slot, s->expr->reg);
                 emit("mov rax, %s", slot);
             } else if (s->expr) {
@@ -464,7 +680,7 @@ static void gen_block(Block *b)
 
 static void gen_func(Func *f)
 {
-    char slot[48];
+    char slot[64];
     fn = f;
     cur_push = 0;
     lbl_ret = label_seq++;
@@ -489,14 +705,19 @@ static void gen_func(Func *f)
     label_def(lbl_body);
     for (int i = 0; i < f->nparams; i++) {
         Param *p = &f->params[i];
-        if (p->storage == ST_REG) {
-            emit("mov %s, %s", abi->pool32[p->idx], abi->arg32[i]);
+        if (p->ty == TY_SLICE) {
+            qword_slot(slot, sizeof slot, p->idx);
+            emit("mov %s, %s", slot, abi->arg64[p->areg]);
+            len_slot(slot, sizeof slot, "QWORD", p->idx);
+            emit("mov %s, %s", slot, abi->arg64[p->areg + 1]);
+        } else if (p->storage == ST_REG) {
+            emit("mov %s, %s", abi->pool32[p->idx], abi->arg32[p->areg]);
         } else if (p->storage == ST_STACK) {
             dword_at(slot, sizeof slot, p->idx, 1, 0);
-            emit("mov %s, %s", slot, abi->arg32[i]);
+            emit("mov %s, %s", slot, abi->arg32[p->areg]);
         } else {
             qword_slot(slot, sizeof slot, p->idx);
-            emit("mov %s, %s", slot, abi->arg64[i]);
+            emit("mov %s, %s", slot, abi->arg64[p->areg]);
         }
     }
 
@@ -616,6 +837,25 @@ static void gen_heap_runtime(void)
     }
 }
 
+/* Jumped to when an index is out of range: exit code 101. */
+static void gen_panic_runtime(void)
+{
+    if (!abi->windows) {
+        fputs("rgx_rt_panic:\n", out);
+        emit("mov edi, 101");
+        emit("mov eax, 60");
+        emit("syscall");
+        fputc('\n', out);
+    } else {
+        fputs("rgx_rt_panic PROC\n", out);
+        emit("and rsp, -16");
+        emit("sub rsp, 32");
+        emit("mov ecx, 101");
+        emit("call ExitProcess");
+        fputs("rgx_rt_panic ENDP\n\n", out);
+    }
+}
+
 /* std::io::print_i32: prints a signed decimal and a newline. */
 static void gen_print_runtime(void)
 {
@@ -679,11 +919,178 @@ static void gen_print_runtime(void)
     fputc('\n', out);
 }
 
+/* std::io::print / println: write a [u8] slice (pointer, length) to stdout. */
+static void gen_write_runtime(int newline)
+{
+    const char *name = newline ? "rgx_std_io_println" : "rgx_std_io_print";
+    if (abi->windows)
+        fprintf(out, "%s PROC\n", name);
+    else
+        fprintf(out, "%s:\n", name);
+    emit("push rbp");
+    emit("mov rbp, rsp");
+    if (!abi->windows) {
+        emit("sub rsp, 16");
+        emit("mov rdx, rsi");
+        emit("mov rsi, rdi");
+        emit("mov edi, 1");
+        emit("mov eax, 1");
+        emit("syscall");
+        if (newline) {
+            emit("mov BYTE PTR [rbp-1], 10");
+            emit("lea rsi, [rbp-1]");
+            emit("mov edx, 1");
+            emit("mov edi, 1");
+            emit("mov eax, 1");
+            emit("syscall");
+        }
+    } else {
+        emit("sub rsp, 80");
+        emit("mov QWORD PTR [rbp-8], rcx");
+        emit("mov QWORD PTR [rbp-16], rdx");
+        emit("mov ecx, -11");      /* STD_OUTPUT_HANDLE */
+        emit("call GetStdHandle");
+        emit("mov QWORD PTR [rbp-40], rax");
+        emit("mov rcx, rax");
+        emit("mov rdx, QWORD PTR [rbp-8]");
+        emit("mov r8, QWORD PTR [rbp-16]");
+        emit("lea r9, [rbp-24]");
+        emit("mov QWORD PTR [rsp+32], 0");
+        emit("call WriteFile");
+        if (newline) {
+            emit("mov BYTE PTR [rbp-32], 10");
+            emit("mov rcx, QWORD PTR [rbp-40]");
+            emit("lea rdx, [rbp-32]");
+            emit("mov r8d, 1");
+            emit("lea r9, [rbp-24]");
+            emit("mov QWORD PTR [rsp+32], 0");
+            emit("call WriteFile");
+        }
+    }
+    emit("mov rsp, rbp");
+    emit("pop rbp");
+    emit("ret");
+    if (abi->windows)
+        fprintf(out, "%s ENDP\n", name);
+    fputc('\n', out);
+}
+
+/* ---- process entry ---- */
+
+/* Linux: build the &[&[u8]] of (pointer, length) pairs from argc/argv. */
+static void gen_args_linux(void)
+{
+    int l_loop = label_seq++, l_done = label_seq++, l_len = label_seq++, l_lend = label_seq++;
+    emit("mov rdi, QWORD PTR [rsp]");
+    emit("lea rsi, [rsp+8]");
+    emit("mov rax, rdi");
+    emit("shl rax, 4");
+    emit("sub rsp, rax");
+    emit("and rsp, -16");
+    emit("mov rcx, rsp");
+    emit("xor edx, edx");
+    label_def(l_loop);
+    emit("cmp rdx, rdi");
+    emit_jump("jae", l_done);
+    emit("mov r8, QWORD PTR [rsi+rdx*8]");
+    emit("xor r9d, r9d");
+    label_def(l_len);
+    emit("cmp BYTE PTR [r8+r9], 0");
+    emit_jump("je", l_lend);
+    emit("inc r9");
+    emit_jump("jmp", l_len);
+    label_def(l_lend);
+    emit("mov rax, rdx");
+    emit("shl rax, 4");
+    emit("mov QWORD PTR [rcx+rax], r8");
+    emit("mov QWORD PTR [rcx+rax+8], r9");
+    emit("inc rdx");
+    emit_jump("jmp", l_loop);
+    label_def(l_done);
+    emit("mov rsi, rdi");
+    emit("mov rdi, rcx");
+}
+
+/* Windows: split GetCommandLineA() in place (spaces and tabs separate
+ * arguments, double quotes group; no backslash rules). At most 128 arguments. */
+static void gen_args_windows(void)
+{
+    int l_next = label_seq++, l_skip = label_seq++, l_adv = label_seq++, l_sdone = label_seq++;
+    int l_tok = label_seq++, l_inq = label_seq++, l_copy = label_seq++, l_sp = label_seq++;
+    int l_end = label_seq++, l_done = label_seq++;
+    emit("call GetCommandLineA");
+    emit("mov rsi, rax");
+    emit("lea rdi, [rbp-2048]");
+    emit("xor r12d, r12d");
+    label_def(l_next);
+    label_def(l_skip);
+    emit("mov al, BYTE PTR [rsi]");
+    emit("cmp al, 32");
+    emit_jump("je", l_adv);
+    emit("cmp al, 9");
+    emit_jump("jne", l_sdone);
+    label_def(l_adv);
+    emit("inc rsi");
+    emit_jump("jmp", l_skip);
+    label_def(l_sdone);
+    emit("cmp BYTE PTR [rsi], 0");
+    emit_jump("je", l_done);
+    emit("cmp r12, 128");
+    emit_jump("jae", l_done);
+    emit("mov r8, rsi");
+    emit("mov r14, rsi");
+    emit("xor r9d, r9d");
+    label_def(l_tok);
+    emit("mov al, BYTE PTR [rsi]");
+    emit("test al, al");
+    emit_jump("je", l_end);
+    emit("test r9d, r9d");
+    emit_jump("jne", l_inq);
+    emit("cmp al, 32");
+    emit_jump("je", l_sp);
+    emit("cmp al, 9");
+    emit_jump("je", l_sp);
+    emit("cmp al, 34");
+    emit_jump("jne", l_copy);
+    emit("mov r9d, 1");
+    emit("inc rsi");
+    emit_jump("jmp", l_tok);
+    label_def(l_inq);
+    emit("cmp al, 34");
+    emit_jump("jne", l_copy);
+    emit("xor r9d, r9d");
+    emit("inc rsi");
+    emit_jump("jmp", l_tok);
+    label_def(l_copy);
+    emit("mov BYTE PTR [r8], al");
+    emit("inc r8");
+    emit("inc rsi");
+    emit_jump("jmp", l_tok);
+    label_def(l_sp);
+    emit("inc rsi");
+    label_def(l_end);
+    emit("mov BYTE PTR [r8], 0");
+    emit("mov rax, r8");
+    emit("sub rax, r14");
+    emit("mov rdx, r12");
+    emit("shl rdx, 4");
+    emit("mov QWORD PTR [rdi+rdx], r14");
+    emit("mov QWORD PTR [rdi+rdx+8], rax");
+    emit("inc r12");
+    emit_jump("jmp", l_next);
+    label_def(l_done);
+    emit("mov rcx, rdi");
+    emit("mov rdx, r12");
+}
+
 static void gen_entry(Func *m)
 {
     int is_void = m->ret_ty == TY_VOID;
+    int has_args = m->nparams == 1;
     if (!abi->windows) {
         fputs("_start:\n", out);
+        if (has_args)
+            gen_args_linux();
         emit("call %s", m->sym);
         if (is_void)
             emit("xor edi, edi");
@@ -693,7 +1100,11 @@ static void gen_entry(Func *m)
         emit("syscall");
     } else {
         fputs("mainCRTStartup PROC\n", out);
-        emit("sub rsp, 40");
+        emit("push rbp");
+        emit("mov rbp, rsp");
+        emit("sub rsp, 2080");     /* 128 argument slots + shadow space */
+        if (has_args)
+            gen_args_windows();
         emit("call %s", m->sym);
         if (is_void)
             emit("xor ecx, ecx");
@@ -704,10 +1115,37 @@ static void gen_entry(Func *m)
     }
 }
 
+/* ---- data ---- */
+
+static void gen_strings(void)
+{
+    if (prog_g->nstrs == 0)
+        return;
+    fputs(abi->windows ? ".const\n" : ".section .rodata\n", out);
+    for (int i = 0; i < prog_g->nstrs; i++) {
+        StrLit *s = &prog_g->strs[i];
+        if (abi->windows)
+            fprintf(out, "rgx_str%d BYTE ", i);
+        else
+            fprintf(out, ".Lstr%d:\n    .byte ", i);
+        if (s->len == 0)
+            fputs("0", out);
+        for (int j = 0; j < s->len; j++) {
+            if (j && j % 16 == 0)
+                fputs(abi->windows ? "\n    BYTE " : "\n    .byte ", out);
+            else if (j)
+                fputc(',', out);
+            fprintf(out, "%d", (unsigned char)s->data[j]);
+        }
+        fputc('\n', out);
+    }
+}
+
 void codegen_program(Program *prog, const Abi *a, FILE *o)
 {
     out = o;
     abi = a;
+    prog_g = prog;
     label_seq = 0;
 
     Func *main_fn = NULL;
@@ -723,10 +1161,12 @@ void codegen_program(Program *prog, const Abi *a, FILE *o)
             fputs("EXTRN HeapAlloc:PROC\n", out);
             fputs("EXTRN HeapFree:PROC\n", out);
         }
-        if (prog->uses_print) {
+        if (prog->uses_print || prog->uses_write || prog->uses_writeln) {
             fputs("EXTRN GetStdHandle:PROC\n", out);
             fputs("EXTRN WriteFile:PROC\n", out);
         }
+        if (main_fn && main_fn->nparams == 1)
+            fputs("EXTRN GetCommandLineA:PROC\n", out);
         for (int i = 0; i < prog->nfuncs; i++)
             fprintf(out, "PUBLIC %s\n", prog->funcs[i]->sym);
         if (main_fn)
@@ -746,10 +1186,18 @@ void codegen_program(Program *prog, const Abi *a, FILE *o)
 
     if (prog->uses_heap)
         gen_heap_runtime();
+    if (prog->uses_panic)
+        gen_panic_runtime();
     if (prog->uses_print)
         gen_print_runtime();
+    if (prog->uses_write)
+        gen_write_runtime(0);
+    if (prog->uses_writeln)
+        gen_write_runtime(1);
     if (main_fn)
         gen_entry(main_fn);
+
+    gen_strings();
 
     if (abi->windows)
         fputs("END\n", out);
