@@ -1,0 +1,5 @@
+// expect-exit: 8
+fn main() -> reg i32 {
+    stack a: [i32; 8] = [0; 8]
+    return(a.len)
+}
