@@ -7,6 +7,7 @@
  *   // expect-exit: N       compile, run, and require exit code N
  *   // expect-error: TEXT   compilation must fail and print TEXT
  *   // expect-stdout: TEXT  (with expect-exit) program output must contain TEXT
+ *   // args: A B            (with expect-exit) command-line arguments to run with
  *   // expect-gas: TEXT     `--target linux-x64 -S` output must contain TEXT
  *   // expect-masm: TEXT    `--target windows-x64 -S` output must contain TEXT
  *
@@ -149,6 +150,7 @@ static void run_case(const char *rgc, const char *dir, const char *file)
     char *gas_s = directive(src, "expect-gas");
     char *masm_s = directive(src, "expect-masm");
     char *out_s = directive(src, "expect-stdout");
+    char *args_s = directive(src, "args");
     char *log = xsprintf("%s/%s.log", TMP, name);
 
     if (exit_s) {
@@ -158,7 +160,8 @@ static void run_case(const char *rgc, const char *dir, const char *file)
             report(name, 0, "compilation failed (see build/tmp log)");
         } else {
             char *outf = xsprintf("%s/%s.stdout", TMP, name);
-            char *rcmd = out_s ? xsprintf("%s > %s", exe, outf) : xsprintf("%s", exe);
+            char *runp = args_s ? xsprintf("%s %s", exe, args_s) : xstrdup(exe);
+            char *rcmd = out_s ? xsprintf("%s > %s", runp, outf) : runp;
             int rc = run_cmd(rcmd);
             int want = atoi(exit_s);
             if (rc == want && out_s && !file_contains(outf, out_s)) {
