@@ -1,0 +1,6 @@
+// expect-gas: mov BYTE PTR [r10+r11-1], 0
+fn main() -> reg i32 {
+    stack a: [i32; 4] = [1, 2, 3, 4]
+    drop(a)
+    return(0)
+}
