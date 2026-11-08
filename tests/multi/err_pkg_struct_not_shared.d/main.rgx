@@ -1,0 +1,7 @@
+// expect-error: unknown type 'Point'
+import geo;
+
+fn main() -> reg i32 {
+    stack p: Point = Point { x: 1 }
+    return(0)
+}
