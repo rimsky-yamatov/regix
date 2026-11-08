@@ -1,0 +1,16 @@
+// expect-exit: 0
+// Blocks of different classes are freed and reused; contents must stay intact.
+fn main() -> reg i32 {
+    reg i: i32 = 0
+    reg bad: i32 = 0
+    while (i < 2000) {
+        heap small: [u8; 10] = [3; 10]
+        heap big: [u8; 1000] = [5; 1000]
+        heap mid: [i32; 20] = [7; 20]
+        if (small[9] != 3) { bad = 1 }
+        if (big[999] != 5) { bad = 1 }
+        if (mid[19] != 7) { bad = 1 }
+        i = i + 1
+    }
+    return(bad)
+}
