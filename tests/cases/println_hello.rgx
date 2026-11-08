@@ -1,0 +1,7 @@
+// expect-exit: 0
+// expect-stdout: Hello, Regix
+import std::io;
+
+fn main() -> void {
+    std::io::println("Hello, Regix")
+}
