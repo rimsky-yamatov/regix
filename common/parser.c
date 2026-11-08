@@ -355,9 +355,14 @@ static Stmt *parse_stmt(Parser *p)
     Token *t = cur(p);
     Stmt *s;
 
+    int secret = accept(p, T_KW_SECRET);
     Storage st = accept_storage(p);
+    if (secret && st == ST_NONE)
+        rgx_die(p->file, cur(p)->line, cur(p)->col,
+                "expected a storage class (reg, stack or heap) after 'secret'");
     if (st != ST_NONE) {
         s = mk_stmt(S_DECL, t);
+        s->secret = secret;
         s->storage = st;
         s->name = ident_text(expect(p, T_IDENT, "variable name"));
         expect(p, T_COLON, "':'");
