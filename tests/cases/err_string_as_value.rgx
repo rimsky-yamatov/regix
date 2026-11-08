@@ -1,0 +1,5 @@
+// expect-error: a string literal can only
+fn main() -> reg i32 {
+    reg x: i32 = "hi"
+    return(0)
+}
