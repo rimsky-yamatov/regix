@@ -1,0 +1,14 @@
+// expect-exit: 3
+fn bump(stack n: &mut i32) -> void {
+    *n = *n + 1
+}
+
+fn main() -> reg i32 {
+    reg i: i32 = 0
+    while (i < 20000) {
+        heap t: i32 = 0
+        bump(&mut t)
+        i = i + 1
+    }
+    return(3)
+}
