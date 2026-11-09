@@ -242,6 +242,8 @@ static int declare(Ctx *c, const char *name, Storage st, Ty ty, StructDef *sd, c
         l.size = l.arr.alen * esz(l.arr.elem);
     else if (ty == TY_SLICE)
         l.size = 16;
+    else if (ty == TY_REF)
+        l.size = 8;
     else if (ty == TY_STRUCT && sd)
         l.size = sd->size;
     else
@@ -423,6 +425,165 @@ static void check_slice_arg(Ctx *c, Expr *call, Expr *a, Param *p)
         "variable or a string literal", p->name);
 }
 
+static int resolve_field(Ctx *c, Expr *e, Local **root, int *off, Ty *ty, StructDef **sd);
+
+/* ---- references (&T, &mut T) ---- */
+
+typedef struct {
+    const char *name;
+    int mut;
+} Use;
+
+static void collect_uses(Expr *e, Use **u, int *n, int *cap)
+{
+    if (!e)
+        return;
+    switch (e->kind) {
+    case E_VAR: {
+        Use x = {e->name, 0};
+        VEC_PUSH(*u, *n, *cap, x);
+        break;
+    }
+    case E_ADDR: {
+        Expr *r = e->l;
+        while (r && r->kind == E_FIELD)
+            r = r->l;
+        if (r && r->kind == E_VAR) {
+            Use x = {r->name, (int)e->val};
+            VEC_PUSH(*u, *n, *cap, x);
+        }
+        break;
+    }
+    case E_CALL:
+        for (int i = 0; i < e->nargs; i++)
+            collect_uses(e->args[i], u, n, cap);
+        break;
+    case E_FIELD:
+    case E_LEN:
+    case E_NEG:
+    case E_DEREF:
+        collect_uses(e->l, u, n, cap);
+        break;
+    case E_BIN:
+    case E_INDEX:
+        collect_uses(e->l, u, n, cap);
+        collect_uses(e->r, u, n, cap);
+        break;
+    default:
+        break;
+    }
+}
+
+/* A variable borrowed mutably in a call may not be used anywhere else in the
+ * same call (no aliasing). */
+static void check_aliasing(Ctx *c, Expr *call)
+{
+    Use *u = NULL;
+    int n = 0, cap = 0;
+    for (int i = 0; i < call->nargs; i++)
+        collect_uses(call->args[i], &u, &n, &cap);
+    for (int i = 0; i < n; i++) {
+        if (!u[i].mut)
+            continue;
+        int count = 0;
+        for (int j = 0; j < n; j++)
+            if (strcmp(u[i].name, u[j].name) == 0)
+                count++;
+        if (count > 1) {
+            err(c, call->line, call->col,
+                "'%s' is borrowed mutably and also used elsewhere in this call", u[i].name);
+            return;
+        }
+    }
+}
+
+/* Argument for a reference parameter: &x, &mut x, &x.field, or a reference
+ * variable passed on. */
+static void check_ref_arg(Ctx *c, Expr *call, Expr *a, Param *p)
+{
+    if (a->kind == E_VAR) {
+        Local *l = lookup(c, a->name);
+        if (l && l->ty == TY_REF) {
+            Expr *v = xcalloc(sizeof *v);
+            *v = *a;
+            a->kind = E_ADDR;
+            a->l = v;
+            a->val = p->arr.rmut;
+        }
+    }
+    if (a->kind != E_ADDR) {
+        err(c, a->line, a->col, "the argument for reference parameter '%s' must be &x, &mut x "
+            "or a reference variable", p->name);
+        return;
+    }
+    Expr *t = a->l;
+    Local *root = NULL;
+    int off = 0;
+    Ty ty = TY_I32;
+    StructDef *sd = NULL;
+    if (t->kind == E_VAR) {
+        Local *l = lookup(c, t->name);
+        if (!l) {
+            err(c, t->line, t->col, "undefined variable '%s'", t->name);
+            return;
+        }
+        if (l->dropped) {
+            err(c, t->line, t->col, "use of %s variable '%s'", gone(l), t->name);
+            return;
+        }
+        root = l;
+        if (l->ty == TY_REF) {
+            ty = l->arr.elem;
+            sd = l->sd;
+        } else if (l->ty == TY_STRUCT) {
+            ty = TY_STRUCT;
+            sd = l->sd;
+        } else if (l->ty == TY_I32) {
+            if (l->st == ST_REG) {
+                err(c, t->line, t->col,
+                    "a 'reg' variable has no address; make '%s' 'stack' or 'heap' to borrow it",
+                    t->name);
+                return;
+            }
+        } else {
+            err(c, t->line, t->col, "'%s' is an array or slice; borrow it as a slice parameter "
+                "(&[T]), not as a reference", t->name);
+            return;
+        }
+    } else if (!resolve_field(c, t, &root, &off, &ty, &sd)) {
+        return;
+    }
+    if (p->arr.elem != ty || (ty == TY_STRUCT && p->sdef != sd)) {
+        err(c, a->line, a->col, "type mismatch for reference parameter '%s'", p->name);
+        return;
+    }
+    if (p->arr.rmut && !a->val) {
+        err(c, a->line, a->col, "parameter '%s' needs a mutable borrow: write &mut", p->name);
+        return;
+    }
+    if (a->val && root->ty == TY_REF && !root->arr.rmut) {
+        err(c, a->line, a->col, "cannot borrow mutably through the shared reference '%s'",
+            root->name);
+        return;
+    }
+    if (root->secret) {
+        err(c, a->line, a->col, "a secret cannot be borrowed");
+        return;
+    }
+    a->vty = TY_REF;
+    a->reg = root->idx;
+    a->foff = off;
+    if (root->ty == TY_REF || root->st == ST_HEAP) {
+        a->vst = ST_HEAP;
+        a->bslots = 1;
+    } else {
+        a->vst = ST_STACK;
+        a->bslots = root->slots;
+    }
+    if (root->ty != TY_REF)
+        call->notail = 1; /* the borrowed value lives in this frame: no tail jump */
+}
+
 /* ---- expressions ---- */
 
 static int resolve_field(Ctx *c, Expr *e, Local **root, int *off, Ty *ty, StructDef **sd)
@@ -437,7 +598,7 @@ static int resolve_field(Ctx *c, Expr *e, Local **root, int *off, Ty *ty, Struct
             err(c, e->line, e->col, "use of %s variable '%s'", gone(l), e->name);
             return 0;
         }
-        if (l->ty != TY_STRUCT) {
+        if (l->ty != TY_STRUCT && !(l->ty == TY_REF && l->arr.elem == TY_STRUCT)) {
             err(c, e->line, e->col, "'%s' is not a struct", e->name);
             return 0;
         }
@@ -471,9 +632,14 @@ static int resolve_field(Ctx *c, Expr *e, Local **root, int *off, Ty *ty, Struct
 static void annotate_field(Expr *e, Local *root, int off)
 {
     e->reg = root->idx;
-    e->vst = root->st;
     e->foff = off;
-    e->bslots = root->slots;
+    if (root->ty == TY_REF) { /* the slot holds a pointer, like a heap variable */
+        e->vst = ST_HEAP;
+        e->bslots = 1;
+    } else {
+        e->vst = root->st;
+        e->bslots = root->slots;
+    }
 }
 
 static void check_lit(Ctx *c, Expr *lit, StructDef *sd)
@@ -569,6 +735,9 @@ static Ty check_expr(Ctx *c, Expr *e, int allow_void)
         if (l->ty == TY_ARRAY || l->ty == TY_SLICE)
             err(c, e->line, e->col, "'%s' cannot be used as a value; index it, use '%s.len', "
                 "or borrow it with &%s", e->name, e->name, e->name);
+        if (l->ty == TY_REF)
+            err(c, e->line, e->col, "reference '%s' cannot be used as a value; dereference it "
+                "with *%s (or use %s.field)", e->name, e->name, e->name);
         e->reg = l->idx;
         e->vst = l->st;
         return TY_I32;
@@ -596,6 +765,26 @@ static Ty check_expr(Ctx *c, Expr *e, int allow_void)
             if (ty == TY_STRUCT)
                 err(c, e->line, e->col, "field '%s' is a struct; use one of its fields", e->name);
             annotate_field(e, root, off);
+        }
+        return TY_I32;
+    }
+    case E_DEREF: {
+        Expr *v = e->l;
+        Local *l = v->kind == E_VAR ? lookup(c, v->name) : NULL;
+        if (v->kind != E_VAR) {
+            err(c, e->line, e->col, "only a reference variable can be dereferenced");
+        } else if (!l) {
+            err(c, v->line, v->col, "undefined variable '%s'", v->name);
+        } else if (l->dropped) {
+            err(c, v->line, v->col, "use of %s variable '%s'", gone(l), v->name);
+        } else if (l->ty != TY_REF) {
+            err(c, v->line, v->col, "'%s' is not a reference", v->name);
+        } else if (l->arr.elem != TY_I32) {
+            err(c, v->line, v->col, "'%s' refers to a struct; use its fields (%s.field)",
+                v->name, v->name);
+        } else {
+            e->reg = l->idx;
+            e->vst = ST_HEAP;
         }
         return TY_I32;
     }
@@ -633,6 +822,8 @@ static Ty check_expr(Ctx *c, Expr *e, int allow_void)
             Param *p = (f && i < f->nparams) ? &f->params[i] : NULL;
             if (p && p->ty == TY_SLICE)
                 check_slice_arg(c, e, e->args[i], p);
+            else if (p && p->ty == TY_REF)
+                check_ref_arg(c, e, e->args[i], p);
             else if (p && p->storage == ST_HEAP)
                 check_move_arg(c, e->args[i], p);
             else {
@@ -652,6 +843,7 @@ static Ty check_expr(Ctx *c, Expr *e, int allow_void)
             return TY_I32;
         }
         e->callee = f;
+        check_aliasing(c, e);
         if (e->nargs != f->nparams)
             err(c, e->line, e->col, "function '%s' takes %d argument(s) but %d given",
                 f->name, f->nparams, e->nargs);
@@ -738,9 +930,18 @@ static void check_copy_move(Ctx *c, Stmt *s, Expr *v, int is_copy)
         err(c, v->line, v->col, "use of %s variable '%s'", gone(l), v->name);
         return;
     }
-    int same = l->ty == s->ty &&
+    int same;
+    if (l->ty == TY_REF) {
+        same = s->ty == TY_STRUCT && l->arr.elem == TY_STRUCT && l->sd == s->sdef;
+        if (same && !is_copy) {
+            err(c, v->line, v->col, "cannot move out of a reference; use copy(%s)", v->name);
+            return;
+        }
+    } else {
+        same = l->ty == s->ty &&
                (s->ty == TY_STRUCT ? l->sd == s->sdef
                                    : (l->arr.elem == s->arr.elem && l->arr.alen == s->arr.alen));
+    }
     if (!same) {
         err(c, v->line, v->col, "type mismatch: '%s' has a different type", v->name);
         return;
@@ -754,7 +955,7 @@ static void check_copy_move(Ctx *c, Stmt *s, Expr *v, int is_copy)
         return;
     }
     s->cpy = is_copy ? CP_COPY : CP_MOVE;
-    s->cst = l->st;
+    s->cst = l->ty == TY_REF ? ST_HEAP : l->st; /* a reference holds a pointer, like heap */
     s->cidx = l->idx;
     s->cbs = l->slots;
     if (!is_copy) {
@@ -774,6 +975,9 @@ static void check_decl(Ctx *c, Stmt *s)
     s->sdef = sd;
     if (s->ty == TY_SLICE)
         err(c, s->line, s->col, "slice variables are not supported; slices exist as parameters");
+    if (s->ty == TY_REF)
+        err(c, s->line, s->col,
+            "reference variables are not supported; references exist as parameters");
     if ((s->ty == TY_STRUCT || s->ty == TY_ARRAY) && s->storage == ST_REG)
         err(c, s->line, s->col,
             "%s variable '%s' cannot be 'reg'; it lives in 'stack' or 'heap'",
@@ -802,7 +1006,7 @@ static void check_decl(Ctx *c, Stmt *s)
         check_copy_move(c, s, copy_src, is_copy);
     } else if (s->ty == TY_ARRAY) {
         check_array_init(c, s);
-    } else if (s->ty == TY_SLICE) {
+    } else if (s->ty == TY_SLICE || s->ty == TY_REF) {
         /* already reported */
     } else if (s->ty == TY_STRUCT) {
         if (!sd) {
@@ -940,10 +1144,37 @@ static void check_stmt(Ctx *c, Stmt *s)
                 err(c, s->line, s->col, "cannot assign a whole struct; assign its fields");
             annotate_field(s->lhs, root, off);
             tsec = root->secret;
+            if (root->ty == TY_REF && !root->arr.rmut)
+                err(c, s->line, s->col, "cannot assign through the shared reference '%s' (use &mut)",
+                    root->name);
         }
         check_expr(c, s->expr, 0);
         if (!tsec && is_secret_expr(c, s->expr))
             err(c, s->line, s->col, "a secret cannot be copied into a non-secret variable");
+        break;
+    }
+    case S_DASSIGN: {
+        Expr *d = s->lhs;
+        Expr *v = d->l;
+        Local *l = v->kind == E_VAR ? lookup(c, v->name) : NULL;
+        if (v->kind != E_VAR) {
+            err(c, s->line, s->col, "only a reference variable can be dereferenced");
+        } else if (!l) {
+            err(c, v->line, v->col, "undefined variable '%s'", v->name);
+        } else if (l->dropped) {
+            err(c, v->line, v->col, "use of %s variable '%s'", gone(l), v->name);
+        } else if (l->ty != TY_REF) {
+            err(c, v->line, v->col, "'%s' is not a reference", v->name);
+        } else if (l->arr.elem != TY_I32) {
+            err(c, v->line, v->col, "'%s' refers to a struct; assign its fields", v->name);
+        } else if (!l->arr.rmut) {
+            err(c, s->line, s->col, "cannot assign through the shared reference '%s' (use &mut)",
+                v->name);
+        } else {
+            d->reg = l->idx;
+            d->vst = ST_HEAP;
+        }
+        check_expr(c, s->expr, 0);
         break;
     }
     case S_IASSIGN:
@@ -1071,6 +1302,15 @@ static void check_func(Ctx *c, Func *f)
                     "struct parameter '%s' must be 'heap' (the value moves into the callee)",
                     p->name);
         }
+        if (p->ty == TY_REF) {
+            if (p->arr.elem == TY_STRUCT) {
+                p->sdef = find_struct(c, p->tyname);
+                if (!p->sdef)
+                    err(c, p->line, p->col, "unknown type '%s'", p->tyname);
+            }
+            if (p->storage != ST_STACK)
+                err(c, p->line, p->col, "reference parameter '%s' must be 'stack'", p->name);
+        }
         if (p->ty == TY_ARRAY)
             err(c, p->line, p->col,
                 "array parameter '%s' is not supported; pass a slice (&[T]) instead", p->name);
@@ -1193,7 +1433,7 @@ int check_program(Program *prog, const Abi *abi, int require_main)
         int areg = 0;
         for (int j = 0; j < f->nparams; j++) {
             Param *p = &f->params[j];
-            if (p->ty == TY_STRUCT)
+            if (p->ty == TY_STRUCT || (p->ty == TY_REF && p->arr.elem == TY_STRUCT))
                 p->sdef = find_struct(&c, p->tyname);
             p->areg = areg;
             areg += p->ty == TY_SLICE ? 2 : 1;
