@@ -1,0 +1,8 @@
+// expect-error: not allowed here
+struct S {
+    r: &i32,
+}
+
+fn main() -> reg i32 {
+    return(0)
+}
