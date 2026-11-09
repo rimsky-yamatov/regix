@@ -41,6 +41,8 @@ Windows (Visual Studio with the C++ tools, from an x64 developer prompt):
 
     rgpm init hello && cd hello && rgpm run
 
+    rgc main.rgx src/a/b/x.rgx -o app     # several files; package a::b in x.rgx
+
 More programs are in `examples/` (`hello`, `args`, `sum`, `struct`, `heap`).
 
     rgc examples/fact.rgx --target windows-x64 -S -o fact.asm   # MASM text only

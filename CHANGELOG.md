@@ -16,7 +16,7 @@
 - Slice parameters `&[T]` (borrowed, read-only), string literals as `&[u8]`.
 - `std::io::print` and `std::io::println` for byte slices.
 - `main` can take `stack args: &[&[u8]]` (Linux and Windows).
-- Tests: runner supports `// args:` and multi-file cases (`tests/multi/NAME.d`); 203 cases.
+- Tests: runner supports `// args:` and multi-file cases (`tests/multi/NAME.d`); 191 cases.
 
 ## v0.1.0
 
