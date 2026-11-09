@@ -1,0 +1,15 @@
+// expect-exit: 3
+fn inner(stack n: &mut i32) -> void {
+    *n = *n + 1
+}
+
+fn outer(stack n: &mut i32) -> void {
+    inner(n)
+    inner(n)
+}
+
+fn main() -> reg i32 {
+    stack a: i32 = 1
+    outer(&mut a)
+    return(a)
+}
