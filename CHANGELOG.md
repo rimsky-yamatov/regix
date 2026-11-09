@@ -2,13 +2,21 @@
 
 ## Unreleased
 
+- Multi-file programs: `rgc` takes several files; `package`, `import` and `pub`
+  are enforced across packages; `rgpm build` compiles all of `src/` and checks
+  that each file's package matches its directory.
+- Linux heap allocator with size classes and free lists (replaces one page
+  per allocation).
+- `copy(x)` and move for structs and arrays between `stack` and `heap`.
+- `secret` variables: wiped at scope end, before return and tail jumps; direct
+  copies, passing, borrowing and returning are rejected.
 - Arrays `[i32; N]` and `[u8; N]` (`stack` or `heap`) with literals, repeat
   `[v; N]`, string-literal initialization, `a[i]`, `a.len`, bounds checks
   (exit code 101) and byte-wise `drop`.
 - Slice parameters `&[T]` (borrowed, read-only), string literals as `&[u8]`.
 - `std::io::print` and `std::io::println` for byte slices.
 - `main` can take `stack args: &[&[u8]]` (Linux and Windows).
-- Tests: runner supports `// args:`; 141 cases.
+- Tests: runner supports `// args:` and multi-file cases (`tests/multi/NAME.d`); 203 cases.
 
 ## v0.1.0
 

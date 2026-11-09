@@ -97,29 +97,69 @@ constant or a variable. On Windows the command line is split on spaces and
 tabs with double quotes grouping; there are no backslash rules, and at most
 128 arguments are kept.
 
+## Packages across files
+
+* A file may start with `package a::b;`, then `import` lines. `rgc` takes any
+  number of files: `rgc main.rgx src/a/b/x.rgx -o app`.
+* Names in the current package resolve without a prefix, even across files.
+  A function in another package is called with its full name,
+  `a::b::f(1)`, and needs `import a::b;` plus `pub fn f`.
+* Structs are visible inside their own package only (cross-package struct
+  types are not implemented yet).
+* Exactly one `main` must exist. Two functions with the same name are fine in
+  different packages.
+* `rgpm build` compiles every `.rgx` under `src/`. The directory must match
+  the package: `src/com/example/x.rgx` declares `package com::example;`, and
+  files directly in `src/` declare no package.
+
+## Copy and move of structs and arrays
+
+    stack b: Point = copy(a)     // duplicates the bytes; `a` stays usable
+    stack c: Point = a           // moves; `a` can no longer be used
+
+Both work between `stack` and `heap` (a heap source that moves to the stack is
+freed; heap to heap just transfers the block). Types must match exactly.
+Whole-value assignment `a = b` is still rejected.
+
+## `secret`
+
+    secret reg   key: i32 = 3
+    secret stack buf: [u8; 16] = [0; 16]
+
+A secret is zero-filled at the end of its scope and before every `return` or
+tail jump (a `heap` secret is zeroed and then freed). `drop(x)` clears it
+earlier. Direct leaks are compile errors: copying a secret into a non-secret
+variable (or field or element), passing it to a function, borrowing it,
+returning it, or `copy`-ing it. A secret may be moved only into another
+secret. There is no taint tracking: `reg y: i32 = k + 0` is accepted.
+
+## Heap allocator
+
+Linux: a size-class allocator. Each block has a 16-byte header; block sizes
+are powers of two from 32 to 8192 bytes, carved from 1 MiB `mmap` chunks, and
+freed blocks go on per-class lists for reuse (not cleared; use `drop` or
+`secret` to clear). Windows: `HeapAlloc`/`HeapFree` on the process heap. The
+largest heap value is 4096 bytes.
+
 ## Implementation status (unreleased, after v0.1.0)
 
 Implemented:
 
 * Types: `i32`, structs of `i32` fields and nested structs (inline), arrays
   `[i32; N]` / `[u8; N]`, slice parameters, string literals.
-* Variables: `reg`, `stack`, `heap`; `if`/`else`, `while`, assignment, calls,
-  guaranteed tail calls.
-* `stack` values live in frame slots. `heap` values come from a tiny runtime
-  and are released at scope end, before every `return`, and before a tail
-  call jumps away.
-* `drop(x)` zero-fills and releases; use after drop, double drop, and
-  dropping in one branch of an `if` or inside a loop are compile errors.
-* Parameters and returns: `reg`, `stack` (copied) and `heap` (ownership moves).
-* `import` is enforced for the `std::io` functions above.
+* Variables: `reg`, `stack`, `heap`, optional `secret`; `if`/`else`, `while`,
+  assignment, calls, guaranteed tail calls.
+* `drop`, `copy`, moves, ownership transfer through `heap` parameters and
+  returns, compile-time use-after-drop/move checks.
+* Multi-file packages with `import` and `pub`; `rgpm init/build/run`.
+* `std::io::print_i32`, `print`, `println`; `main` arguments.
 
 Known limits (planned, not implemented):
 
-* Struct `heap` fields (recursive types), whole-struct copy and move by
-  assignment, `copy(x)`, the `secret` modifier.
-* Arrays inside structs, arrays as parameters or return values, `&mut [T]`,
-  slices of slices other than `main`'s arguments, slice variables.
-* The rest of the standard library; importing user packages from other files.
-* Each heap value takes a whole page on Linux (`mmap`/`munmap`) and the
-  size you ask for from the process heap on Windows; a real allocator comes later.
+* Struct `heap` fields: a recursive type needs a null value and borrowed
+  references to be usable (a list cannot be traversed with moves alone), so it
+  waits for a design of references.
+* Whole-value assignment `a = b`; passing structs or arrays by value;
+  arrays inside structs; `&mut [T]`; slice variables.
+* Cross-package structs; the rest of the standard library.
 * A `reg` struct or array is rejected.
