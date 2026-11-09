@@ -1,0 +1,9 @@
+// expect-error: a 'reg' variable has no address
+fn f(stack n: &mut i32) -> void {
+}
+
+fn main() -> reg i32 {
+    reg a: i32 = 0
+    f(&mut a)
+    return(0)
+}
