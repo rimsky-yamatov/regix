@@ -1,0 +1,9 @@
+// expect-exit: 9
+fn twice(stack n: &i32) -> reg i32 {
+    return(*n + *n)
+}
+
+fn main() -> reg i32 {
+    stack a: i32 = 4
+    return(twice(&a) + 1)
+}
