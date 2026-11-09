@@ -1,0 +1,13 @@
+// expect-error: type mismatch for reference parameter
+struct P {
+    x: i32,
+}
+
+fn f(stack p: &P) -> void {
+}
+
+fn main() -> reg i32 {
+    stack a: i32 = 1
+    f(&a)
+    return(0)
+}
