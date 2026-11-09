@@ -1,0 +1,15 @@
+// expect-exit: 0
+// Passing a reference parameter on keeps the tail-call guarantee: 500000 jumps.
+fn count(stack n: &mut i32, reg left: i32) -> reg i32 {
+    *n = *n + 1
+    if (left == 0) {
+        return(0)
+    }
+    return(count(n, left - 1))
+}
+
+fn main() -> reg i32 {
+    stack c: i32 = 0
+    reg r: i32 = count(&mut c, 500000)
+    return(r)
+}
