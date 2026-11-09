@@ -1,0 +1,9 @@
+// expect-exit: 10
+fn add(stack a: &i32, stack b: &i32) -> reg i32 {
+    return(*a + *b)
+}
+
+fn main() -> reg i32 {
+    stack x: i32 = 5
+    return(add(&x, &x))
+}
