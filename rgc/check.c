@@ -17,6 +17,8 @@ typedef struct {
     int slots;    /* frame slots occupied (stack: whole value, heap: the pointer) */
     int dropped;  /* dropped or moved: no longer usable */
     int moved;
+    int secret;   /* cleared at scope end; never copied or passed on */
+    Stmt *decl;   /* declaring statement (NULL for parameters) */
 } Local;
 
 typedef struct {
@@ -264,6 +266,19 @@ static int declare(Ctx *c, const char *name, Storage st, Ty ty, StructDef *sd, c
 
 static const char *gone(Local *l) { return l->moved ? "moved" : "dropped"; }
 
+/* True if `e` names a secret variable (or a field or element of one). */
+static int is_secret_expr(Ctx *c, Expr *e)
+{
+    while (e->kind == E_FIELD)
+        e = e->l;
+    if (e->kind == E_INDEX)
+        e = e->l;
+    if (e->kind != E_VAR)
+        return 0;
+    Local *l = lookup(c, e->name);
+    return l && l->secret;
+}
+
 /* ---- drop state (flow-sensitive) ---- */
 
 static char *snap(Ctx *c, int count)
@@ -378,6 +393,10 @@ static void check_slice_arg(Ctx *c, Expr *call, Expr *a, Param *p)
             return;
         if (l->arr.elem != p->arr.elem || l->arr.elem2 != p->arr.elem2) {
             err(c, a->line, a->col, "type mismatch for slice parameter '%s'", p->name);
+            return;
+        }
+        if (l->secret) {
+            err(c, a->line, a->col, "a secret cannot be borrowed");
             return;
         }
         bind_seq(a, l);
@@ -517,6 +536,10 @@ static void check_move_arg(Ctx *c, Expr *a, Param *p)
             a->name);
         return;
     }
+    if (l->secret) {
+        err(c, a->line, a->col, "a secret cannot be passed to a function");
+        return;
+    }
     if (l->ty != p->ty || l->sd != p->sdef) {
         err(c, a->line, a->col, "type mismatch for parameter '%s'", p->name);
         return;
@@ -612,8 +635,17 @@ static Ty check_expr(Ctx *c, Expr *e, int allow_void)
                 check_slice_arg(c, e, e->args[i], p);
             else if (p && p->storage == ST_HEAP)
                 check_move_arg(c, e->args[i], p);
-            else
+            else {
                 check_expr(c, e->args[i], 0);
+                if (is_secret_expr(c, e->args[i]))
+                    err(c, e->args[i]->line, e->args[i]->col,
+                        "a secret cannot be passed to a function");
+            }
+        }
+        if (!f && strcmp(e->name, "copy") == 0) {
+            err(c, e->line, e->col,
+                "copy(x) can only initialize a struct or array variable: 'stack q: T = copy(p)'");
+            return TY_I32;
         }
         if (!f) {
             err(c, e->line, e->col, "undefined function '%s'", e->name);
@@ -685,6 +717,52 @@ static void check_array_init(Ctx *c, Stmt *s)
     }
 }
 
+static int user_func_named(Ctx *c, const char *name)
+{
+    for (int i = 0; i < c->prog->nfuncs; i++)
+        if (strcmp(c->prog->funcs[i]->name, name) == 0)
+            return 1;
+    return 0;
+}
+
+/* `stack q: T = copy(p)` duplicates the bytes; `stack q: T = p` moves (the
+ * source can no longer be used). Structs and arrays only. */
+static void check_copy_move(Ctx *c, Stmt *s, Expr *v, int is_copy)
+{
+    Local *l = lookup(c, v->name);
+    if (!l) {
+        err(c, v->line, v->col, "undefined variable '%s'", v->name);
+        return;
+    }
+    if (l->dropped) {
+        err(c, v->line, v->col, "use of %s variable '%s'", gone(l), v->name);
+        return;
+    }
+    int same = l->ty == s->ty &&
+               (s->ty == TY_STRUCT ? l->sd == s->sdef
+                                   : (l->arr.elem == s->arr.elem && l->arr.alen == s->arr.alen));
+    if (!same) {
+        err(c, v->line, v->col, "type mismatch: '%s' has a different type", v->name);
+        return;
+    }
+    if (is_copy && l->secret) {
+        err(c, v->line, v->col, "a secret cannot be copied; move it instead");
+        return;
+    }
+    if (l->secret && !s->secret) {
+        err(c, v->line, v->col, "a secret can only be moved into another 'secret' variable");
+        return;
+    }
+    s->cpy = is_copy ? CP_COPY : CP_MOVE;
+    s->cst = l->st;
+    s->cidx = l->idx;
+    s->cbs = l->slots;
+    if (!is_copy) {
+        l->dropped = 1;
+        l->moved = 1;
+    }
+}
+
 static void check_decl(Ctx *c, Stmt *s)
 {
     StructDef *sd = NULL;
@@ -705,8 +783,23 @@ static void check_decl(Ctx *c, Stmt *s)
         err(c, s->line, s->col, "heap values larger than %d bytes are not supported",
             HEAP_MAX_BYTES);
 
+    Expr *copy_src = NULL;
+    int is_copy = 0;
+    if (s->expr) {
+        Expr *x = s->expr;
+        if (x->kind == E_CALL && strcmp(x->name, "copy") == 0 && x->nargs == 1 &&
+            x->args[0]->kind == E_VAR && !user_func_named(c, "copy")) {
+            copy_src = x->args[0];
+            is_copy = 1;
+        } else if (x->kind == E_VAR && (s->ty == TY_STRUCT || s->ty == TY_ARRAY)) {
+            copy_src = x;
+        }
+    }
+
     if (!s->expr) {
         err(c, s->line, s->col, "variable '%s' needs an initializer", s->name);
+    } else if (copy_src && (s->ty == TY_STRUCT || s->ty == TY_ARRAY)) {
+        check_copy_move(c, s, copy_src, is_copy);
     } else if (s->ty == TY_ARRAY) {
         check_array_init(c, s);
     } else if (s->ty == TY_SLICE) {
@@ -741,10 +834,15 @@ static void check_decl(Ctx *c, Stmt *s)
         }
     } else {
         check_expr(c, s->expr, 0);
+        if (!s->secret && is_secret_expr(c, s->expr))
+            err(c, s->expr->line, s->expr->col,
+                "a secret cannot be copied into a non-secret variable");
     }
 
     s->reg = declare(c, s->name, s->storage, s->ty, sd, &s->arr);
     Local *l = &c->loc[c->n - 1];
+    l->secret = s->secret;
+    l->decl = s;
     s->size = l->size;
     s->bslots = l->slots;
     if (s->storage == ST_HEAP)
@@ -771,6 +869,8 @@ static void check_return(Ctx *c, Stmt *s)
                     err(c, x->line, x->col, "use of %s variable '%s'", gone(l), x->name);
                 } else if (l->st != ST_HEAP || l->ty == TY_ARRAY) {
                     err(c, x->line, x->col, "'%s' is not a movable 'heap' value", x->name);
+                } else if (l->secret) {
+                    err(c, x->line, x->col, "a secret cannot be returned");
                 } else if (!same_type(l->ty, l->sd, f->ret_ty, f->ret_sdef)) {
                     err(c, x->line, x->col, "type mismatch in return value");
                 } else {
@@ -792,8 +892,13 @@ static void check_return(Ctx *c, Stmt *s)
             }
         } else {
             check_expr(c, x, 0);
+            if (is_secret_expr(c, x))
+                err(c, x->line, x->col, "a secret cannot be returned");
         }
     }
+    for (int i = 0; i < c->n; i++)
+        if (c->loc[i].secret && !c->loc[i].dropped)
+            VEC_PUSH(s->wipe, s->nwipe, s->wipecap, c->loc[i].decl);
     for (int i = 0; i < c->n; i++)
         if (c->loc[i].st == ST_HEAP && !c->loc[i].dropped)
             VEC_PUSH(s->rel, s->nrel, s->relcap, c->loc[i].idx);
@@ -820,9 +925,12 @@ static void check_stmt(Ctx *c, Stmt *s)
             s->storage = l->st;
         }
         check_expr(c, s->expr, 0);
+        if (l && !l->secret && is_secret_expr(c, s->expr))
+            err(c, s->line, s->col, "a secret cannot be copied into a non-secret variable");
         break;
     }
     case S_FASSIGN: {
+        int tsec = 1;
         Local *root;
         int off;
         Ty ty;
@@ -831,14 +939,22 @@ static void check_stmt(Ctx *c, Stmt *s)
             if (ty == TY_STRUCT)
                 err(c, s->line, s->col, "cannot assign a whole struct; assign its fields");
             annotate_field(s->lhs, root, off);
+            tsec = root->secret;
         }
         check_expr(c, s->expr, 0);
+        if (!tsec && is_secret_expr(c, s->expr))
+            err(c, s->line, s->col, "a secret cannot be copied into a non-secret variable");
         break;
     }
     case S_IASSIGN:
         if (check_index(c, s->lhs, 0) && s->lhs->vty == TY_SLICE)
             err(c, s->line, s->col, "slices are read-only; assign through the array itself");
         check_expr(c, s->expr, 0);
+        {
+            Local *bl = s->lhs->l->kind == E_VAR ? lookup(c, s->lhs->l->name) : NULL;
+            if (bl && !bl->secret && is_secret_expr(c, s->expr))
+                err(c, s->line, s->col, "a secret cannot be copied into a non-secret variable");
+        }
         break;
     case S_DROP: {
         Local *l = lookup(c, s->name);
@@ -915,6 +1031,9 @@ static void check_block(Ctx *c, Block *b)
     int saved_n = c->n, saved_reg = c->nreg, saved_slot = c->nslot;
     for (int i = 0; i < b->n; i++)
         check_stmt(c, b->stmts[i]);
+    for (int i = saved_n; i < c->n; i++)
+        if (c->loc[i].secret && !c->loc[i].dropped)
+            VEC_PUSH(b->wipe, b->nwipe, b->wipecap, c->loc[i].decl);
     for (int i = saved_n; i < c->n; i++)
         if (c->loc[i].st == ST_HEAP && !c->loc[i].dropped)
             VEC_PUSH(b->rel, b->nrel, b->relcap, c->loc[i].idx);
