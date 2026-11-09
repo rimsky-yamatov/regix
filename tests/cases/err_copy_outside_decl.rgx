@@ -1,0 +1,10 @@
+// expect-error: copy(x) can only initialize
+struct P {
+    x: i32,
+}
+
+fn main() -> reg i32 {
+    stack a: P = P { x: 1 }
+    reg y: i32 = copy(a)
+    return(0)
+}
