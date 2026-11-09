@@ -1,0 +1,12 @@
+// expect-error: cannot move out of a reference
+struct P {
+    x: i32,
+}
+
+fn f(stack p: &P) -> void {
+    stack q: P = p
+}
+
+fn main() -> reg i32 {
+    return(0)
+}
