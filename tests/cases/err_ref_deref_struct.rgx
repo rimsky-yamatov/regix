@@ -1,0 +1,12 @@
+// expect-error: refers to a struct
+struct P {
+    x: i32,
+}
+
+fn f(stack p: &P) -> reg i32 {
+    return(*p)
+}
+
+fn main() -> reg i32 {
+    return(0)
+}
