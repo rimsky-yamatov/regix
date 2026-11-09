@@ -1,0 +1,11 @@
+// expect-exit: 6
+struct P {
+    x: i32,
+    y: i32,
+}
+
+fn main() -> reg i32 {
+    stack a: P = P { x: 3, y: 3 }
+    stack b: P = copy(a)
+    return(a.x + b.y)
+}
