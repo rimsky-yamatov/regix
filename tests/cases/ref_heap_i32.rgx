@@ -1,0 +1,10 @@
+// expect-exit: 8
+fn add(stack n: &mut i32, reg d: i32) -> void {
+    *n = *n + d
+}
+
+fn main() -> reg i32 {
+    heap h: i32 = 5
+    add(&mut h, 3)
+    return(h)
+}
