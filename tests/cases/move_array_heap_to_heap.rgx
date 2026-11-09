@@ -1,0 +1,6 @@
+// expect-exit: 6
+fn main() -> reg i32 {
+    heap a: [i32; 3] = [1, 2, 3]
+    heap b: [i32; 3] = a
+    return(b[0] + b[1] + b[2])
+}
