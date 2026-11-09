@@ -164,13 +164,15 @@ static void gen_index_prep(Expr *e)
 
 /* ---- calls ---- */
 
-enum { A_COMPLEX, A_SIMPLE, A_HEAP, A_SLICE };
+enum { A_COMPLEX, A_SIMPLE, A_HEAP, A_SLICE, A_REF };
 
 static int arg_kind(Expr *call, int i)
 {
     Param *p = &call->callee->params[i];
     if (p->ty == TY_SLICE)
         return A_SLICE;
+    if (p->ty == TY_REF)
+        return A_REF;
     if (p->storage == ST_HEAP)
         return A_HEAP;
     return is_simple(call->args[i]) ? A_SIMPLE : A_COMPLEX;
@@ -214,6 +216,21 @@ static void set_slice_regs(Expr *a, int ar)
     }
 }
 
+/* Pass the address of a borrowed variable or field in argument register `ar`. */
+static void set_ref_reg(Expr *a, int ar)
+{
+    char slot[64];
+    const char *r = abi->arg64[ar];
+    if (a->vst == ST_HEAP) {          /* heap value or reference: the slot holds a pointer */
+        qword_slot(slot, sizeof slot, a->reg);
+        emit("mov %s, %s", r, slot);
+        if (a->foff)
+            emit("add %s, %d", r, a->foff);
+    } else {                          /* stack value: address inside the frame */
+        emit("lea %s, [rbp-%d]", r, 8 * (a->reg + a->bslots) - a->foff);
+    }
+}
+
 static void setup_args(Expr *call)
 {
     int n = call->nargs;
@@ -244,6 +261,9 @@ static void setup_args(Expr *call)
             break;
         case A_SLICE:
             set_slice_regs(call->args[i], ar);
+            break;
+        case A_REF:
+            set_ref_reg(call->args[i], ar);
             break;
         default:
             break;
@@ -343,6 +363,11 @@ static void gen_expr(Expr *e)
             emit("movzx eax, BYTE PTR [r11+rax]");
         else
             emit("mov eax, DWORD PTR [r11+rax*4]");
+        break;
+    case E_DEREF:
+        qword_slot(slot, sizeof slot, e->reg);
+        emit("mov r11, %s", slot);
+        emit("mov eax, DWORD PTR [r11]");
         break;
     case E_LEN:
         if (e->vty == TY_SLICE) {
@@ -665,6 +690,9 @@ static void gen_stmt(Stmt *s)
     case S_IASSIGN:
         gen_index_assign(s);
         break;
+    case S_DASSIGN:
+        gen_store_elem(ST_HEAP, s->lhs->reg, 1, 0, 4, s->expr);
+        break;
     case S_DROP:
         gen_drop(s);
         break;
@@ -772,6 +800,9 @@ static void gen_func(Func *f)
             emit("mov %s, %s", slot, abi->arg64[p->areg]);
             len_slot(slot, sizeof slot, "QWORD", p->idx);
             emit("mov %s, %s", slot, abi->arg64[p->areg + 1]);
+        } else if (p->ty == TY_REF) {
+            qword_slot(slot, sizeof slot, p->idx);
+            emit("mov %s, %s", slot, abi->arg64[p->areg]);
         } else if (p->storage == ST_REG) {
             emit("mov %s, %s", abi->pool32[p->idx], abi->arg32[p->areg]);
         } else if (p->storage == ST_STACK) {
