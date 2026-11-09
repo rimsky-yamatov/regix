@@ -1,0 +1,9 @@
+// expect-error: is borrowed mutably and also used elsewhere in this call
+fn f(stack a: &mut i32, stack b: &mut i32) -> void {
+}
+
+fn main() -> reg i32 {
+    stack x: i32 = 0
+    f(&mut x, &mut x)
+    return(0)
+}
