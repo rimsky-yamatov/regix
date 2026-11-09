@@ -1,0 +1,14 @@
+// expect-exit: 45
+fn add(stack total: &mut i32, reg v: i32) -> void {
+    *total = *total + v
+}
+
+fn main() -> reg i32 {
+    stack sum: i32 = 0
+    reg i: i32 = 0
+    while (i < 10) {
+        add(&mut sum, i)
+        i = i + 1
+    }
+    return(sum)
+}
