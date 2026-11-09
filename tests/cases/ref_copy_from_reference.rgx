@@ -1,0 +1,16 @@
+// expect-exit: 9
+struct P {
+    x: i32,
+    y: i32,
+}
+
+fn dup_sum(stack p: &P) -> reg i32 {
+    stack q: P = copy(p)
+    q.x = q.x + 1
+    return(q.x + q.y + p.x)
+}
+
+fn main() -> reg i32 {
+    stack a: P = P { x: 3, y: 2 }
+    return(dup_sum(&a))
+}
