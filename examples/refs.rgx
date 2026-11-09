@@ -1,0 +1,31 @@
+import std::io;
+
+struct Counter {
+    hits: i32,
+    misses: i32,
+}
+
+fn record(stack c: &mut Counter, reg hit: i32) -> void {
+    if (hit) {
+        c.hits = c.hits + 1
+    } else {
+        c.misses = c.misses + 1
+    }
+}
+
+fn total(stack c: &Counter) -> reg i32 {
+    return(c.hits + c.misses)
+}
+
+fn main() -> reg i32 {
+    stack c: Counter = Counter { hits: 0, misses: 0 }
+    reg i: i32 = 0
+    while (i < 10) {
+        record(&mut c, i < 3)
+        i = i + 1
+    }
+    std::io::print_i32(c.hits)     // 3
+    std::io::print_i32(c.misses)   // 7
+    std::io::print_i32(total(&c))  // 10
+    return(0)
+}
