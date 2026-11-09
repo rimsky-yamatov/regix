@@ -1,0 +1,10 @@
+// expect-error: needs a mutable borrow: write &mut
+fn f(stack n: &mut i32) -> void {
+    *n = 1
+}
+
+fn main() -> reg i32 {
+    stack a: i32 = 0
+    f(&a)
+    return(0)
+}
