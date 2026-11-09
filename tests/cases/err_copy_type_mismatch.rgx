@@ -1,0 +1,14 @@
+// expect-error: has a different type
+struct P {
+    x: i32,
+}
+
+struct Q {
+    x: i32,
+}
+
+fn main() -> reg i32 {
+    stack a: P = P { x: 1 }
+    stack b: Q = copy(a)
+    return(0)
+}
