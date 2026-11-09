@@ -481,9 +481,53 @@ static void gen_array_init(Stmt *s)
     }
 }
 
+/* Initialize a struct or array from another variable: byte copy, or a move.
+ * Uses rcx, rdx, r8, r9 (free at statement level). */
+static void gen_copy_decl(Stmt *s)
+{
+    char slot[64];
+    int l_loop = label_seq++;
+    if (s->cpy == CP_MOVE && s->storage == ST_HEAP && s->cst == ST_HEAP) {
+        qword_slot(slot, sizeof slot, s->cidx);   /* ownership of the block moves */
+        emit("mov r10, %s", slot);
+        qword_slot(slot, sizeof slot, s->reg);
+        emit("mov %s, r10", slot);
+        return;
+    }
+    if (s->storage == ST_HEAP)
+        gen_alloc(s->size, s->reg);
+    if (s->cst == ST_STACK) {
+        emit("lea r8, [rbp-%d]", 8 * (s->cidx + s->cbs));
+    } else {
+        qword_slot(slot, sizeof slot, s->cidx);
+        emit("mov r8, %s", slot);
+    }
+    if (s->storage == ST_STACK) {
+        emit("lea r9, [rbp-%d]", 8 * (s->reg + s->bslots));
+    } else {
+        qword_slot(slot, sizeof slot, s->reg);
+        emit("mov r9, %s", slot);
+    }
+    emit("mov ecx, %d", s->size);
+    label_def(l_loop);
+    emit("mov dl, BYTE PTR [r8+rcx-1]");
+    emit("mov BYTE PTR [r9+rcx-1], dl");
+    emit("dec ecx");
+    emit_jump("jnz", l_loop);
+    if (s->cpy == CP_MOVE && s->cst == ST_HEAP) {
+        qword_slot(slot, sizeof slot, s->cidx);   /* the old block is no longer needed */
+        emit("mov r10, %s", slot);
+        emit("call rgx_rt_free");
+    }
+}
+
 static void gen_decl(Stmt *s)
 {
     char slot[64];
+    if (s->cpy) {
+        gen_copy_decl(s);
+        return;
+    }
     if (s->ty == TY_ARRAY) {
         gen_array_init(s);
     } else if (s->storage == ST_HEAP) {
@@ -516,7 +560,9 @@ static void gen_release(const int *rel, int n)
     }
 }
 
-static void gen_drop(Stmt *s)
+/* Zero the whole value of a declared variable; release the heap block too
+ * when `release` is set (drop). Leaves r10 holding the heap pointer. */
+static void gen_zero(Stmt *s, int release)
 {
     char slot[64], mem[64];
     if (s->ty == TY_ARRAY) {
@@ -527,7 +573,7 @@ static void gen_drop(Stmt *s)
         emit("mov BYTE PTR [r10+r11-1], 0");
         emit("dec r11d");
         emit_jump("jnz", l_loop);
-        if (s->storage == ST_HEAP)
+        if (release && s->storage == ST_HEAP)
             emit("call rgx_rt_free");
         return;
     }
@@ -548,11 +594,24 @@ static void gen_drop(Stmt *s)
             dword_via(mem, sizeof mem, "r10", off);
             emit("mov %s, 0", mem);
         }
-        emit("call rgx_rt_free");
+        if (release)
+            emit("call rgx_rt_free");
         break;
     default:
         break;
     }
+}
+
+static void gen_drop(Stmt *s)
+{
+    gen_zero(s, 1);
+}
+
+/* Clear secret locals that are still alive at the end of a scope. */
+static void gen_wipe(Stmt **list, int n)
+{
+    for (int i = n - 1; i >= 0; i--)
+        gen_zero(list[i], 0);
 }
 
 static void gen_epilogue(void)
@@ -641,6 +700,7 @@ static void gen_stmt(Stmt *s)
         if (s->expr && s->expr->kind == E_CALL && !s->expr->notail) {
             /* guaranteed tail call: arguments first, then release, then jump */
             setup_args(s->expr);
+            gen_wipe(s->wipe, s->nwipe);
             gen_release(s->rel, s->nrel);
             if (s->expr->callee == fn) {
                 emit_jump("jmp", lbl_body);
@@ -656,6 +716,7 @@ static void gen_stmt(Stmt *s)
             } else if (s->expr) {
                 gen_expr(s->expr);
             }
+            gen_wipe(s->wipe, s->nwipe);
             gen_release(s->rel, s->nrel);
             emit_jump("jmp", lbl_ret);
         }
@@ -673,6 +734,7 @@ static void gen_block(Block *b)
 {
     for (int i = 0; i < b->n; i++)
         gen_stmt(b->stmts[i]);
+    gen_wipe(b->wipe, b->nwipe);
     gen_release(b->rel, b->nrel);
 }
 
