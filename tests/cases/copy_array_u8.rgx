@@ -1,0 +1,6 @@
+// expect-exit: 111
+fn main() -> reg i32 {
+    heap a: [u8; 5] = "Hello"
+    stack b: [u8; 5] = copy(a)
+    return(b[4])
+}
