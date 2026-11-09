@@ -1,0 +1,13 @@
+// expect-error: moved in only one branch
+struct P {
+    x: i32,
+}
+
+fn main() -> reg i32 {
+    stack a: P = P { x: 1 }
+    reg c: i32 = 1
+    if (c) {
+        stack b: P = a
+    }
+    return(0)
+}
