@@ -301,7 +301,8 @@ static Expr *mk_bin(BinOp op, Token *t, Expr *l, Expr *r)
 static Expr *parse_mul(Parser *p)
 {
     Expr *l = parse_unary(p);
-    while (at(p, T_STAR)) {
+    /* A `*` that starts a new line begins a statement (`*r = v`), not a product. */
+    while (at(p, T_STAR) && cur(p)->line == p->t[p->pos - 1].line) {
         Token *t = advance(p);
         l = mk_bin(OP_MUL, t, l, parse_unary(p));
     }
