@@ -1,0 +1,7 @@
+// expect-error: must be 'stack'
+fn f(reg n: &i32) -> void {
+}
+
+fn main() -> reg i32 {
+    return(0)
+}
