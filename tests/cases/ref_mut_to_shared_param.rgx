@@ -1,0 +1,14 @@
+// expect-exit: 6
+fn read(stack n: &i32) -> reg i32 {
+    return(*n)
+}
+
+fn bump(stack n: &mut i32) -> reg i32 {
+    *n = *n + 1
+    return(read(n))
+}
+
+fn main() -> reg i32 {
+    stack a: i32 = 5
+    return(bump(&mut a))
+}
