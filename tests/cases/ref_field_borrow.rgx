@@ -1,0 +1,15 @@
+// expect-exit: 7
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn inc(stack n: &mut i32) -> void {
+    *n = *n + 1
+}
+
+fn main() -> reg i32 {
+    stack p: Point = Point { x: 3, y: 3 }
+    inc(&mut p.y)
+    return(p.x + p.y)
+}
