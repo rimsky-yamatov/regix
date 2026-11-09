@@ -1,0 +1,8 @@
+// expect-error: cannot assign through the shared reference 'n'
+fn f(stack n: &i32) -> void {
+    *n = 1
+}
+
+fn main() -> reg i32 {
+    return(0)
+}
