@@ -1,0 +1,10 @@
+// expect-exit: 42
+fn inc(stack n: &mut i32) -> void {
+    *n = *n + 1
+}
+
+fn main() -> reg i32 {
+    stack a: i32 = 41
+    inc(&mut a)
+    return(a)
+}
