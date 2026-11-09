@@ -1,0 +1,8 @@
+// expect-error: not allowed here
+fn f(stack n: &i32) -> reg &i32 {
+    return(n)
+}
+
+fn main() -> reg i32 {
+    return(0)
+}
