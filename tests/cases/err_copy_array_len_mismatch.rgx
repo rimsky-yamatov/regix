@@ -1,0 +1,6 @@
+// expect-error: has a different type
+fn main() -> reg i32 {
+    stack a: [i32; 2] = [1, 2]
+    stack b: [i32; 3] = copy(a)
+    return(0)
+}
