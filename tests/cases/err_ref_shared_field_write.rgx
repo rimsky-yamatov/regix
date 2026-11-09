@@ -1,0 +1,12 @@
+// expect-error: cannot assign through the shared reference 'p'
+struct P {
+    x: i32,
+}
+
+fn f(stack p: &P) -> void {
+    p.x = 1
+}
+
+fn main() -> reg i32 {
+    return(0)
+}
