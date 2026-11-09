@@ -1,0 +1,8 @@
+// expect-error: must be &x, &mut x or a reference variable
+fn f(stack n: &i32) -> void {
+}
+
+fn main() -> reg i32 {
+    f(5)
+    return(0)
+}
