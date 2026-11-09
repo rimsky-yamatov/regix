@@ -1,0 +1,5 @@
+// expect-error: is not a reference
+fn main() -> reg i32 {
+    stack a: i32 = 1
+    return(*a)
+}
