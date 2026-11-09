@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Borrowed references `&T` and `&mut T` as parameters: `&x`, `&mut x`, field
+  borrows, `*r`, `*r = v`, `r.field`; shared-write, aliasing and `reg`-has-no-address
+  errors. A `*` at the start of a line now begins a statement.
 - Multi-file programs: `rgc` takes several files; `package`, `import` and `pub`
   are enforced across packages; `rgpm build` compiles all of `src/` and checks
   that each file's package matches its directory.
@@ -16,7 +19,7 @@
 - Slice parameters `&[T]` (borrowed, read-only), string literals as `&[u8]`.
 - `std::io::print` and `std::io::println` for byte slices.
 - `main` can take `stack args: &[&[u8]]` (Linux and Windows).
-- Tests: runner supports `// args:` and multi-file cases (`tests/multi/NAME.d`); 191 cases.
+- Tests: runner supports `// args:` and multi-file cases (`tests/multi/NAME.d`); 229 cases.
 
 ## v0.1.0
 

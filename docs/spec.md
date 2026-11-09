@@ -141,25 +141,60 @@ freed blocks go on per-class lists for reuse (not cleared; use `drop` or
 `secret` to clear). Windows: `HeapAlloc`/`HeapFree` on the process heap. The
 largest heap value is 4096 bytes.
 
+## References (`&T`, `&mut T`)
+
+    fn inc(stack n: &mut i32) -> void { *n = *n + 1 }
+    fn len2(stack p: &Point) -> reg i32 { return(p.x + p.y) }
+
+    stack a: i32 = 41
+    inc(&mut a)                    // a is 42
+    stack p: Point = Point { x: 1, y: 2 }
+    heap  h: Point = Point { x: 3, y: 4 }
+    len2(&p) + len2(&h)
+
+* `T` is `i32` or a struct. A reference exists only as a `stack` parameter, so
+  it lives exactly as long as the call and cannot dangle. References cannot be
+  variables, struct fields or return values.
+* The caller spells the borrow: `&x` (shared), `&mut x` (mutable), or a field
+  such as `&mut p.pos.y`. A `&mut x` may be passed to a `&T` parameter; a `&x`
+  cannot be passed to `&mut T`.
+* Through a reference: `*r` reads and `*r = v` writes an `i32`; `r.field`
+  reads and `r.field = v` writes a struct field (no `*` needed). Writing
+  through a shared reference is a compile error.
+* A reference parameter can be passed on (`g(r)`); a shared reference cannot
+  be passed where `&mut` is needed.
+* A `reg` variable has no address and cannot be borrowed; use `stack` or
+  `heap`. Arrays and slices are borrowed as slices (`&[T]`), not as references.
+* No aliasing: a variable borrowed with `&mut` cannot appear anywhere else in
+  the same call (not as `&x`, not by value, not as another field of it).
+* `copy(r)` copies a struct out of a reference; moving out of a reference is
+  an error. A secret cannot be borrowed.
+* A call that borrows a local of the current frame is an ordinary call, not a
+  tail jump; passing a reference parameter on keeps the tail-call guarantee.
+* A `*` at the start of a line begins a statement (`*r = v`) rather than a
+  multiplication, so write a product's `*` on the same line as its left side.
+
 ## Implementation status (unreleased, after v0.1.0)
 
 Implemented:
 
 * Types: `i32`, structs of `i32` fields and nested structs (inline), arrays
-  `[i32; N]` / `[u8; N]`, slice parameters, string literals.
+  `[i32; N]` / `[u8; N]`, slice and reference parameters, string literals.
 * Variables: `reg`, `stack`, `heap`, optional `secret`; `if`/`else`, `while`,
   assignment, calls, guaranteed tail calls.
 * `drop`, `copy`, moves, ownership transfer through `heap` parameters and
   returns, compile-time use-after-drop/move checks.
+* Borrowed references `&T` / `&mut T` as parameters, with aliasing checks.
 * Multi-file packages with `import` and `pub`; `rgpm init/build/run`.
 * `std::io::print_i32`, `print`, `println`; `main` arguments.
 
 Known limits (planned, not implemented):
 
-* Struct `heap` fields: a recursive type needs a null value and borrowed
-  references to be usable (a list cannot be traversed with moves alone), so it
-  waits for a design of references.
+* Struct `heap` fields (recursive types) still need a null value and a way to
+  hold a reference across a loop iteration (a reference that is a local
+  variable); both are next on the list.
 * Whole-value assignment `a = b`; passing structs or arrays by value;
-  arrays inside structs; `&mut [T]`; slice variables.
+  arrays inside structs; `&mut [T]`; slice variables; references to array
+  elements.
 * Cross-package structs; the rest of the standard library.
 * A `reg` struct or array is rejected.
