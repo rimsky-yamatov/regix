@@ -1,0 +1,12 @@
+// expect-exit: 3
+fn set2(stack a: &mut i32, stack b: &mut i32) -> void {
+    *a = 1
+    *b = 2
+}
+
+fn main() -> reg i32 {
+    stack x: i32 = 0
+    stack y: i32 = 0
+    set2(&mut x, &mut y)
+    return(x + y)
+}
