@@ -1,7 +1,7 @@
 #ifndef RGX_AST_H
 #define RGX_AST_H
 
-typedef enum { TY_VOID, TY_I32, TY_STRUCT, TY_U8, TY_ARRAY, TY_SLICE } Ty;
+typedef enum { TY_VOID, TY_I32, TY_STRUCT, TY_U8, TY_ARRAY, TY_SLICE, TY_REF } Ty;
 
 /* Extra type information for [T; N] arrays and &[T] slices. u8 exists only as
  * an element type; a slice of slices (&[&[u8]]) is only used for main's args. */
@@ -9,16 +9,17 @@ typedef struct {
     Ty elem;     /* TY_I32, TY_U8 or (slices only) TY_SLICE */
     Ty elem2;    /* element of the inner slice when elem == TY_SLICE */
     int alen;    /* arrays: number of elements */
+    int rmut;    /* references (TY_REF): 1 for &mut T; elem is TY_I32 or TY_STRUCT */
 } ArrInfo;
 typedef enum { ST_NONE, ST_REG, ST_STACK, ST_HEAP } Storage;
 typedef enum { E_INT, E_VAR, E_NEG, E_BIN, E_CALL, E_FIELD, E_STRUCTLIT,
-    E_STR, E_ARRAYLIT, E_ARRAYREP, E_INDEX, E_ADDR, E_LEN
+    E_STR, E_ARRAYLIT, E_ARRAYREP, E_INDEX, E_ADDR, E_LEN, E_DEREF
 } ExprKind;
 enum { CP_NONE, CP_COPY, CP_MOVE };
 
 typedef enum { OP_ADD, OP_SUB, OP_MUL, OP_LT, OP_GT, OP_LE, OP_GE, OP_EQ, OP_NE } BinOp;
 typedef enum {
-    S_DECL, S_ASSIGN, S_FASSIGN, S_IASSIGN, S_IF, S_WHILE, S_RETURN, S_EXPR, S_BLOCK, S_DROP
+    S_DECL, S_ASSIGN, S_FASSIGN, S_IASSIGN, S_DASSIGN, S_IF, S_WHILE, S_RETURN, S_EXPR, S_BLOCK, S_DROP
 } StmtKind;
 
 typedef struct Func Func;

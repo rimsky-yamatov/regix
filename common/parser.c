@@ -90,7 +90,7 @@ static Ty parse_type(Parser *p, int allow_void, char **sname, ArrInfo *ai)
     Token *t = cur(p);
     if (t->kind == T_LBRACKET || t->kind == T_AMP) {
         if (!ai)
-            rgx_die(p->file, t->line, t->col, "array and slice types are not allowed here");
+            rgx_die(p->file, t->line, t->col, "array, slice and reference types are not allowed here (references exist as parameters)");
         if (t->kind == T_LBRACKET) {
             advance(p);
             ai->elem = parse_elem(p);
@@ -103,7 +103,25 @@ static Ty parse_type(Parser *p, int allow_void, char **sname, ArrInfo *ai)
             return TY_ARRAY;
         }
         advance(p);
-        expect(p, T_LBRACKET, "'['");
+        if (!at(p, T_LBRACKET)) {
+            /* reference: &T or &mut T */
+            int is_mut = 0;
+            Token *mt = cur(p);
+            if (mt->kind == T_IDENT && mt->len == 3 && memcmp(mt->text, "mut", 3) == 0) {
+                advance(p);
+                is_mut = 1;
+            }
+            Token *tt = expect(p, T_IDENT, "type");
+            if (tt->len == 3 && memcmp(tt->text, "i32", 3) == 0) {
+                ai->elem = TY_I32;
+            } else {
+                ai->elem = TY_STRUCT;
+                *sname = ident_text(tt);
+            }
+            ai->rmut = is_mut;
+            return TY_REF;
+        }
+        advance(p);
         if (accept(p, T_AMP)) {
             expect(p, T_LBRACKET, "'['");
             ai->elem2 = parse_elem(p);
@@ -149,11 +167,20 @@ static Expr *parse_primary(Parser *p)
     }
     if (t->kind == T_AMP) {
         advance(p);
-        Token *vt = expect(p, T_IDENT, "variable name");
-        Expr *v = mk_expr(E_VAR, vt);
-        v->name = ident_text(vt);
+        int is_mut = 0;
+        Token *mt = cur(p);
+        if (mt->kind == T_IDENT && mt->len == 3 && memcmp(mt->text, "mut", 3) == 0 &&
+            peek1(p)->kind == T_IDENT) {
+            advance(p);
+            is_mut = 1;
+        }
+        Token *vt = cur(p);
+        Expr *v = parse_primary(p);
+        if (v->kind != E_VAR && v->kind != E_FIELD)
+            rgx_die(p->file, vt->line, vt->col, "expected a variable or field after '&'");
         Expr *e = mk_expr(E_ADDR, t);
         e->l = v;
+        e->val = is_mut;
         return e;
     }
     if (t->kind == T_LBRACKET) {
@@ -249,6 +276,11 @@ static Expr *parse_primary(Parser *p)
 static Expr *parse_unary(Parser *p)
 {
     Token *t = cur(p);
+    if (accept(p, T_STAR)) {
+        Expr *e = mk_expr(E_DEREF, t);
+        e->l = parse_unary(p);
+        return e;
+    }
     if (accept(p, T_MINUS)) {
         Expr *e = mk_expr(E_NEG, t);
         e->l = parse_unary(p);
@@ -395,6 +427,13 @@ static Stmt *parse_stmt(Parser *p)
         s = mk_stmt(S_DROP, t);
         s->name = ident_text(expect(p, T_IDENT, "variable name"));
         expect(p, T_RPAREN, "')'");
+    } else if (t->kind == T_STAR) {
+        s = mk_stmt(S_DASSIGN, t);
+        s->lhs = parse_unary(p);
+        if (s->lhs->kind != E_DEREF)
+            rgx_die(p->file, t->line, t->col, "expected '*name = value'");
+        expect(p, T_ASSIGN, "'='");
+        s->expr = parse_expr(p);
     } else if (t->kind == T_IDENT && peek1(p)->kind == T_ASSIGN) {
         s = mk_stmt(S_ASSIGN, t);
         s->name = ident_text(advance(p));
