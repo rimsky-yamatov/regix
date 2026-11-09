@@ -1,0 +1,10 @@
+// expect-error: use of moved variable 'a'
+struct P {
+    x: i32,
+}
+
+fn main() -> reg i32 {
+    stack a: P = P { x: 1 }
+    stack b: P = a
+    return(a.x)
+}
