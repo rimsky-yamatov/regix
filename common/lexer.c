@@ -13,7 +13,7 @@ static const struct {
     {"heap", T_KW_HEAP},     {"if", T_KW_IF},           {"else", T_KW_ELSE},
     {"while", T_KW_WHILE},   {"return", T_KW_RETURN},   {"package", T_KW_PACKAGE},
     {"import", T_KW_IMPORT}, {"struct", T_KW_STRUCT},   {"pub", T_KW_PUB},
-    {"secret", T_KW_SECRET},
+    {"secret", T_KW_SECRET}, {"null", T_KW_NULL},
 };
 
 const char *tok_name(TokKind k)
@@ -35,6 +35,7 @@ const char *tok_name(TokKind k)
     case T_KW_STRUCT: return "'struct'";
     case T_KW_PUB: return "'pub'";
     case T_KW_SECRET: return "'secret'";
+    case T_KW_NULL: return "'null'";
     case T_LPAREN: return "'('";
     case T_RPAREN: return "')'";
     case T_LBRACE: return "'{'";

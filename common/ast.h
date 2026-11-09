@@ -13,9 +13,11 @@ typedef struct {
 } ArrInfo;
 typedef enum { ST_NONE, ST_REG, ST_STACK, ST_HEAP } Storage;
 typedef enum { E_INT, E_VAR, E_NEG, E_BIN, E_CALL, E_FIELD, E_STRUCTLIT,
-    E_STR, E_ARRAYLIT, E_ARRAYREP, E_INDEX, E_ADDR, E_LEN, E_DEREF
+    E_STR, E_ARRAYLIT, E_ARRAYREP, E_INDEX, E_ADDR, E_LEN, E_DEREF,
+    E_NULL, E_ISNULL
 } ExprKind;
 enum { CP_NONE, CP_COPY, CP_MOVE };
+enum { PK_NONE, PK_NULL, PK_MOVE, PK_CALL, PK_TAKE };
 
 typedef enum { OP_ADD, OP_SUB, OP_MUL, OP_LT, OP_GT, OP_LE, OP_GE, OP_EQ, OP_NE } BinOp;
 typedef enum {
@@ -27,12 +29,20 @@ typedef struct Expr Expr;
 typedef struct Stmt Stmt;
 typedef struct StructDef StructDef;
 
+/* A variable whose resources must be released when its scope ends. */
+typedef struct {
+    int idx;          /* first frame slot */
+    int bslots;       /* slots a stack value occupies */
+    StructDef *sd;    /* struct type, or NULL */
+    int is_heap;      /* 1: the slot holds a heap pointer; 0: a stack struct that owns heap fields */
+} Release;
+
 typedef struct Block {
     Stmt **stmts;
     int n, cap;
     Stmt **wipe;     /* secret locals to clear at scope end (declaring statements) */
     int nwipe, wipecap;
-    int *rel;        /* frame slots of heap pointers to release at scope end */
+    Release *rel;    /* resources to release at scope end */
     int nrel, relcap;
 } Block;
 
@@ -53,6 +63,9 @@ struct Expr {
     int reg;         /* variable: register index (reg) or first frame slot (stack/heap) */
     Storage vst;     /* variable storage class */
     int foff;        /* E_FIELD: byte offset inside the struct */
+    int dref[8];     /* E_FIELD, E_ADDR: offsets of owned pointers to load on the way (a.next.value) */
+    int ndref;
+    int lastptr;     /* E_FIELD, E_ADDR: the final field is an owned pointer */
     int bslots;      /* E_FIELD: number of frame slots the stack struct occupies */
     Func *callee;    /* E_CALL */
     StructDef *sdef; /* E_STRUCTLIT */
@@ -84,8 +97,9 @@ struct Stmt {
     int cidx, cbs;   /* source variable first slot and slot count for cpy */
     Stmt **wipe;     /* S_RETURN: secret locals to clear before leaving */
     int nwipe, wipecap;
-    int *rel;        /* S_RETURN: heap slots to release before leaving */
+    Release *rel;    /* S_RETURN: resources to release before leaving */
     int nrel, relcap;
+    int pk;          /* pointer-valued initializer/rhs: PK_NULL, PK_MOVE, PK_CALL, PK_TAKE */
 };
 
 typedef struct {
@@ -94,6 +108,7 @@ typedef struct {
     char *tyname;
     StructDef *sdef;
     int offset;      /* set by check */
+    int is_heap;     /* owned, nullable pointer to a struct (declared with heap) */
     int line, col;
 } Field;
 
@@ -104,6 +119,9 @@ struct StructDef {
     Field *fields;
     int nfields, fcap;
     int size;        /* bytes, set by check */
+    int align;       /* 4, or 8 when the struct holds a pointer; set by check */
+    int has_heap;    /* owns heap fields directly or through inline structs; set by check */
+    char *fsym;      /* assembler symbol of its release routine; set by check */
     int state;       /* layout progress: 0 new, 1 in progress, 2 done */
     int line, col;
     int is_pub;

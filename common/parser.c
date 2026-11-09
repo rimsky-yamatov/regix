@@ -158,6 +158,10 @@ static Expr *parse_expr(Parser *p);
 static Expr *parse_primary(Parser *p)
 {
     Token *t = cur(p);
+    if (t->kind == T_KW_NULL) {
+        advance(p);
+        return mk_expr(E_NULL, t);
+    }
     if (t->kind == T_STRING) {
         advance(p);
         Expr *e = mk_expr(E_STR, t);
@@ -545,12 +549,13 @@ static StructDef *parse_struct(Parser *p, int is_pub)
         if (at(p, T_EOF))
             rgx_die(p->file, cur(p)->line, cur(p)->col, "expected '}', found end of file");
         Token *ft = cur(p);
-        if (accept_storage(p) != ST_NONE)
+        Storage fst = accept_storage(p);
+        if (fst != ST_NONE && fst != ST_HEAP)
             rgx_die(p->file, ft->line, ft->col,
-                    "storage classes on struct fields are not implemented yet "
-                    "(fields are stored inline)");
+                    "only 'heap' may be written on a struct field (other fields are stored inline)");
         Field f;
         memset(&f, 0, sizeof f);
+        f.is_heap = fst == ST_HEAP;
         f.line = ft->line;
         f.col = ft->col;
         f.name = ident_text(expect(p, T_IDENT, "field name"));
