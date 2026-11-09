@@ -1,0 +1,25 @@
+// expect-exit: 9
+struct V {
+    x: i32,
+    y: i32,
+}
+
+struct R {
+    id: i32,
+    pos: V,
+}
+
+fn set(stack n: &mut i32, reg v: i32) -> void {
+    *n = v
+}
+
+fn shift(stack v: &mut V) -> void {
+    v.x = v.x + 1
+}
+
+fn main() -> reg i32 {
+    stack r: R = R { id: 1, pos: V { x: 2, y: 3 } }
+    set(&mut r.pos.y, 6)
+    shift(&mut r.pos)
+    return(r.pos.x + r.pos.y)
+}
