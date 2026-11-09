@@ -1,0 +1,16 @@
+// expect-exit: 3
+// The heap block is freed when its contents move to the stack; no leak or crash.
+struct P {
+    x: i32,
+    y: i32,
+}
+
+fn main() -> reg i32 {
+    reg i: i32 = 0
+    while (i < 30000) {
+        heap a: P = P { x: i, y: 1 }
+        stack b: P = a
+        i = i + 1
+    }
+    return(3)
+}
