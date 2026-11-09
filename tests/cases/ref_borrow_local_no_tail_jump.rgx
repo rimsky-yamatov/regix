@@ -1,0 +1,10 @@
+// expect-exit: 5
+// The borrowed local lives in this frame, so the call is not turned into a jump.
+fn get(stack n: &i32) -> reg i32 {
+    return(*n)
+}
+
+fn main() -> reg i32 {
+    stack a: i32 = 5
+    return(get(&a))
+}
