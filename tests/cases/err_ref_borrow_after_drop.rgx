@@ -1,0 +1,10 @@
+// expect-error: use of dropped variable 'x'
+fn f(stack a: &i32) -> void {
+}
+
+fn main() -> reg i32 {
+    stack x: i32 = 1
+    drop(x)
+    f(&x)
+    return(0)
+}
