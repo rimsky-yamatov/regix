@@ -1,0 +1,11 @@
+// expect-error: cannot borrow mutably through the shared reference 'r'
+fn g(stack n: &mut i32) -> void {
+}
+
+fn f(stack r: &i32) -> void {
+    g(r)
+}
+
+fn main() -> reg i32 {
+    return(0)
+}
