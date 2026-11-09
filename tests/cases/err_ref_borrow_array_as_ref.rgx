@@ -1,0 +1,9 @@
+// expect-error: borrow it as a slice parameter
+fn f(stack a: &i32) -> void {
+}
+
+fn main() -> reg i32 {
+    stack arr: [i32; 2] = [1, 2]
+    f(&arr)
+    return(0)
+}
