@@ -1,0 +1,12 @@
+// expect-exit: 8
+struct P {
+    x: i32,
+    y: i32,
+}
+
+fn main() -> reg i32 {
+    heap a: P = P { x: 5, y: 1 }
+    heap b: P = copy(a)
+    b.x = 7
+    return(a.x - 5 + b.x + b.y)
+}
