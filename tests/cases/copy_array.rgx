@@ -1,0 +1,7 @@
+// expect-exit: 33
+fn main() -> reg i32 {
+    stack a: [i32; 3] = [1, 2, 3]
+    stack b: [i32; 3] = copy(a)
+    b[0] = 30
+    return(a[0] + b[0] + a[1] - 2 + a[2] - 1)
+}
