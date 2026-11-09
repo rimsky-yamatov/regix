@@ -1,0 +1,14 @@
+// expect-error: is borrowed mutably and also used elsewhere in this call
+struct P {
+    x: i32,
+    y: i32,
+}
+
+fn f(stack a: &mut i32, stack p: &P) -> void {
+}
+
+fn main() -> reg i32 {
+    stack p: P = P { x: 1, y: 2 }
+    f(&mut p.x, &p)
+    return(0)
+}
