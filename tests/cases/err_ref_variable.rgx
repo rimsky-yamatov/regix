@@ -1,0 +1,6 @@
+// expect-error: reference variables are not supported
+fn main() -> reg i32 {
+    stack a: i32 = 1
+    stack r: &i32 = &a
+    return(0)
+}
