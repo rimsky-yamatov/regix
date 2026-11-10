@@ -19,6 +19,10 @@ typedef struct {
     int moved;
     int secret;   /* cleared at scope end; never copied or passed on */
     Stmt *decl;   /* declaring statement (NULL for parameters) */
+    int root;     /* reference locals: index of the owner variable it borrows from, or -1 */
+    int is_local_ref; /* a reference declared in the body (not a parameter) */
+    int lock_shared;  /* number of live shared reference locals borrowing from this variable */
+    int lock_mut;     /* a live &mut reference local borrows from this variable */
 } Local;
 
 typedef struct {
@@ -112,17 +116,20 @@ static void layout_struct(Ctx *c, StructDef *sd)
     c->file = saved_file;
 }
 
+static int round_up(int v, int a) { return (v + a - 1) / a * a; }
+
 static void layout_struct_inner(Ctx *c, StructDef *sd)
 {
     if (sd->state == 2)
         return;
     if (sd->state == 1) {
-        err(c, sd->line, sd->col, "struct '%s' contains itself; use a 'heap' field "
-            "(not implemented yet) or remove the cycle", sd->name);
+        err(c, sd->line, sd->col, "struct '%s' contains itself by value; make the recursive "
+            "field 'heap' (an owned pointer)", sd->name);
         return;
     }
     sd->state = 1;
     int off = 0;
+    sd->align = 4;
     if (sd->nfields == 0)
         err(c, sd->line, sd->col, "struct '%s' has no fields", sd->name);
     for (int i = 0; i < sd->nfields; i++) {
@@ -131,21 +138,43 @@ static void layout_struct_inner(Ctx *c, StructDef *sd)
             if (strcmp(sd->fields[j].name, f->name) == 0)
                 err(c, f->line, f->col, "field '%s' is declared twice in struct '%s'",
                     f->name, sd->name);
-        f->offset = off;
+        if (f->is_heap) {
+            /* an owned, nullable pointer: the target may be this very struct */
+            if (f->ty != TY_STRUCT) {
+                err(c, f->line, f->col, "a 'heap' field must hold a struct");
+            } else {
+                f->sdef = find_struct(c, f->tyname);
+                if (!f->sdef)
+                    err(c, f->line, f->col, "unknown type '%s'", f->tyname);
+            }
+            f->offset = round_up(off, 8);
+            off = f->offset + 8;
+            sd->align = 8;
+            sd->has_heap = 1;
+            continue;
+        }
         if (f->ty == TY_STRUCT) {
             f->sdef = find_struct(c, f->tyname);
             if (!f->sdef) {
                 err(c, f->line, f->col, "unknown type '%s'", f->tyname);
+                f->offset = off;
                 off += 4;
                 continue;
             }
             layout_struct(c, f->sdef);
+            off = round_up(off, f->sdef->align ? f->sdef->align : 4);
+            f->offset = off;
             off += f->sdef->size;
+            if (f->sdef->align > sd->align)
+                sd->align = f->sdef->align;
+            if (f->sdef->has_heap)
+                sd->has_heap = 1;
         } else {
+            f->offset = off;
             off += 4;
         }
     }
-    sd->size = off;
+    sd->size = round_up(off, sd->align);
     sd->state = 2;
 }
 
@@ -232,6 +261,7 @@ static int declare(Ctx *c, const char *name, Storage st, Ty ty, StructDef *sd, c
 {
     Local l;
     memset(&l, 0, sizeof l);
+    l.root = -1;
     l.name = name;
     l.st = st;
     l.ty = ty;
@@ -267,6 +297,41 @@ static int declare(Ctx *c, const char *name, Storage st, Ty ty, StructDef *sd, c
 }
 
 static const char *gone(Local *l) { return l->moved ? "moved" : "dropped"; }
+
+enum { U_READ, U_WRITE, U_MOVE };
+
+/* A variable that a live reference local borrows from cannot be used in a way
+ * that conflicts with the borrow (lexical scope, no flow analysis). */
+static int touch(Ctx *c, Local *l, int mode, int line, int col)
+{
+    if (l->lock_mut || (mode != U_READ && l->lock_shared)) {
+        err(c, line, col, "'%s' is borrowed by a reference variable and cannot be %s until "
+            "that reference goes out of scope", l->name,
+            mode == U_READ ? "used" : (mode == U_WRITE ? "modified" : "moved or dropped"));
+        return 0;
+    }
+    return 1;
+}
+
+/* Does the variable own something that must be released at scope end? */
+static int needs_release(Local *l)
+{
+    if (l->dropped)
+        return 0;
+    if (l->st == ST_HEAP)
+        return 1;
+    return l->st == ST_STACK && l->ty == TY_STRUCT && l->sd && l->sd->has_heap;
+}
+
+static Release release_of(Local *l)
+{
+    Release r;
+    r.idx = l->idx;
+    r.bslots = l->slots;
+    r.sd = l->ty == TY_STRUCT ? l->sd : NULL;
+    r.is_heap = l->st == ST_HEAP;
+    return r;
+}
 
 /* True if `e` names a secret variable (or a field or element of one). */
 static int is_secret_expr(Ctx *c, Expr *e)
@@ -332,6 +397,8 @@ static Local *seq_local(Ctx *c, Expr *v, const char *what)
         err(c, v->line, v->col, "use of %s variable '%s'", gone(l), v->name);
         return NULL;
     }
+    if (!touch(c, l, U_READ, v->line, v->col))
+        return NULL;
     if (l->ty != TY_ARRAY && l->ty != TY_SLICE) {
         err(c, v->line, v->col, "'%s' is not an array or slice", v->name);
         return NULL;
@@ -425,7 +492,14 @@ static void check_slice_arg(Ctx *c, Expr *call, Expr *a, Param *p)
         "variable or a string literal", p->name);
 }
 
-static int resolve_field(Ctx *c, Expr *e, Local **root, int *off, Ty *ty, StructDef **sd);
+typedef struct {
+    int dref[8];   /* offsets of owned pointers loaded on the way */
+    int n;
+    int lastptr;   /* the final field is an owned pointer */
+} FPath;
+
+static int resolve_field(Ctx *c, Expr *e, Local **root, int *off, Ty *ty, StructDef **sd,
+                         FPath *fp);
 
 /* ---- references (&T, &mut T) ---- */
 
@@ -497,39 +571,27 @@ static void check_aliasing(Ctx *c, Expr *call)
     }
 }
 
-/* Argument for a reference parameter: &x, &mut x, &x.field, or a reference
- * variable passed on. */
-static void check_ref_arg(Ctx *c, Expr *call, Expr *a, Param *p)
+/* Validate the borrow expression `a` (E_ADDR) against the wanted reference
+ * type and annotate it. Returns the borrowed variable, or NULL after an error. */
+static Local *check_borrow(Ctx *c, Expr *a, Ty want_elem, StructDef *want_sd, int want_mut,
+                           const char *pname)
 {
-    if (a->kind == E_VAR) {
-        Local *l = lookup(c, a->name);
-        if (l && l->ty == TY_REF) {
-            Expr *v = xcalloc(sizeof *v);
-            *v = *a;
-            a->kind = E_ADDR;
-            a->l = v;
-            a->val = p->arr.rmut;
-        }
-    }
-    if (a->kind != E_ADDR) {
-        err(c, a->line, a->col, "the argument for reference parameter '%s' must be &x, &mut x "
-            "or a reference variable", p->name);
-        return;
-    }
     Expr *t = a->l;
     Local *root = NULL;
     int off = 0;
     Ty ty = TY_I32;
     StructDef *sd = NULL;
+    FPath fp;
+    memset(&fp, 0, sizeof fp);
     if (t->kind == E_VAR) {
         Local *l = lookup(c, t->name);
         if (!l) {
             err(c, t->line, t->col, "undefined variable '%s'", t->name);
-            return;
+            return NULL;
         }
         if (l->dropped) {
             err(c, t->line, t->col, "use of %s variable '%s'", gone(l), t->name);
-            return;
+            return NULL;
         }
         root = l;
         if (l->ty == TY_REF) {
@@ -543,36 +605,42 @@ static void check_ref_arg(Ctx *c, Expr *call, Expr *a, Param *p)
                 err(c, t->line, t->col,
                     "a 'reg' variable has no address; make '%s' 'stack' or 'heap' to borrow it",
                     t->name);
-                return;
+                return NULL;
             }
         } else {
             err(c, t->line, t->col, "'%s' is an array or slice; borrow it as a slice parameter "
                 "(&[T]), not as a reference", t->name);
-            return;
+            return NULL;
         }
-    } else if (!resolve_field(c, t, &root, &off, &ty, &sd)) {
-        return;
+    } else if (!resolve_field(c, t, &root, &off, &ty, &sd, &fp)) {
+        return NULL;
     }
-    if (p->arr.elem != ty || (ty == TY_STRUCT && p->sdef != sd)) {
-        err(c, a->line, a->col, "type mismatch for reference parameter '%s'", p->name);
-        return;
+    if (want_elem != ty || (ty == TY_STRUCT && want_sd != sd)) {
+        err(c, a->line, a->col, "type mismatch for reference '%s'", pname);
+        return NULL;
     }
-    if (p->arr.rmut && !a->val) {
-        err(c, a->line, a->col, "parameter '%s' needs a mutable borrow: write &mut", p->name);
-        return;
+    if (want_mut && !a->val) {
+        err(c, a->line, a->col, "'%s' needs a mutable borrow: write &mut", pname);
+        return NULL;
     }
     if (a->val && root->ty == TY_REF && !root->arr.rmut) {
         err(c, a->line, a->col, "cannot borrow mutably through the shared reference '%s'",
             root->name);
-        return;
+        return NULL;
     }
     if (root->secret) {
         err(c, a->line, a->col, "a secret cannot be borrowed");
-        return;
+        return NULL;
     }
+    if (root->ty != TY_REF &&
+        !touch(c, root, a->val ? U_WRITE : U_READ, a->line, a->col))
+        return NULL;
     a->vty = TY_REF;
     a->reg = root->idx;
     a->foff = off;
+    a->ndref = fp.n;
+    memcpy(a->dref, fp.dref, sizeof(int) * (size_t)fp.n);
+    a->lastptr = fp.lastptr;
     if (root->ty == TY_REF || root->st == ST_HEAP) {
         a->vst = ST_HEAP;
         a->bslots = 1;
@@ -580,13 +648,45 @@ static void check_ref_arg(Ctx *c, Expr *call, Expr *a, Param *p)
         a->vst = ST_STACK;
         a->bslots = root->slots;
     }
-    if (root->ty != TY_REF)
+    if (root->ty == TY_REF || root->st == ST_HEAP || fp.n > 0 || fp.lastptr)
+        c->prog->uses_panic = 1;
+    return root;
+}
+
+/* A reference variable passed on, or &x / &mut x. */
+static void as_borrow(Ctx *c, Expr *a, int want_mut)
+{
+    if (a->kind == E_VAR) {
+        Local *l = lookup(c, a->name);
+        if (l && l->ty == TY_REF) {
+            Expr *v = xcalloc(sizeof *v);
+            *v = *a;
+            a->kind = E_ADDR;
+            a->l = v;
+            a->val = want_mut;
+        }
+    }
+}
+
+/* Argument for a reference parameter: &x, &mut x, &x.field, or a reference
+ * variable passed on. */
+static void check_ref_arg(Ctx *c, Expr *call, Expr *a, Param *p)
+{
+    as_borrow(c, a, p->arr.rmut);
+    if (a->kind != E_ADDR) {
+        err(c, a->line, a->col, "the argument for reference parameter '%s' must be &x, &mut x "
+            "or a reference variable", p->name);
+        return;
+    }
+    Local *root = check_borrow(c, a, p->arr.elem, p->sdef, p->arr.rmut, p->name);
+    if (root && root->ty != TY_REF)
         call->notail = 1; /* the borrowed value lives in this frame: no tail jump */
 }
 
 /* ---- expressions ---- */
 
-static int resolve_field(Ctx *c, Expr *e, Local **root, int *off, Ty *ty, StructDef **sd)
+static int resolve_field(Ctx *c, Expr *e, Local **root, int *off, Ty *ty, StructDef **sd,
+                         FPath *fp)
 {
     if (e->kind == E_VAR) {
         Local *l = lookup(c, e->name);
@@ -606,14 +706,25 @@ static int resolve_field(Ctx *c, Expr *e, Local **root, int *off, Ty *ty, Struct
         *off = 0;
         *ty = TY_STRUCT;
         *sd = l->sd;
+        fp->n = 0;
+        fp->lastptr = 0;
         return 1;
     }
     if (e->kind == E_FIELD) {
-        if (!resolve_field(c, e->l, root, off, ty, sd))
+        if (!resolve_field(c, e->l, root, off, ty, sd, fp))
             return 0;
         if (*ty != TY_STRUCT) {
             err(c, e->line, e->col, "cannot access field '%s' of an i32", e->name);
             return 0;
+        }
+        if (fp->lastptr) { /* go through the owned pointer we just passed */
+            if (fp->n >= 8) {
+                err(c, e->line, e->col, "field path is too deep");
+                return 0;
+            }
+            fp->dref[fp->n++] = *off;
+            *off = 0;
+            fp->lastptr = 0;
         }
         Field *f = find_field(*sd, e->name);
         if (!f) {
@@ -621,6 +732,7 @@ static int resolve_field(Ctx *c, Expr *e, Local **root, int *off, Ty *ty, Struct
             return 0;
         }
         *off += f->offset;
+        fp->lastptr = f->is_heap;
         *ty = f->ty;
         *sd = f->sdef;
         return 1;
@@ -629,10 +741,13 @@ static int resolve_field(Ctx *c, Expr *e, Local **root, int *off, Ty *ty, Struct
     return 0;
 }
 
-static void annotate_field(Expr *e, Local *root, int off)
+static void annotate_field(Ctx *c, Expr *e, Local *root, int off, const FPath *fp)
 {
     e->reg = root->idx;
     e->foff = off;
+    e->ndref = fp->n;
+    memcpy(e->dref, fp->dref, sizeof(int) * (size_t)fp->n);
+    e->lastptr = fp->lastptr;
     if (root->ty == TY_REF) { /* the slot holds a pointer, like a heap variable */
         e->vst = ST_HEAP;
         e->bslots = 1;
@@ -640,6 +755,56 @@ static void annotate_field(Expr *e, Local *root, int off)
         e->vst = root->st;
         e->bslots = root->slots;
     }
+    if (root->st == ST_HEAP || root->ty == TY_REF || fp->n > 0 || fp->lastptr)
+        c->prog->uses_panic = 1;
+}
+
+/* A value for a 'heap Target' slot: null, a heap variable (moved), or a call
+ * that returns one. Returns a PK_ constant, or PK_NONE after an error. */
+static int check_heap_value(Ctx *c, Expr *x, StructDef *target)
+{
+    if (x->kind == E_NULL)
+        return PK_NULL;
+    if (x->kind == E_VAR) {
+        Local *l = lookup(c, x->name);
+        if (!l) {
+            err(c, x->line, x->col, "undefined variable '%s'", x->name);
+            return PK_NONE;
+        }
+        if (l->dropped) {
+            err(c, x->line, x->col, "use of %s variable '%s'", gone(l), x->name);
+            return PK_NONE;
+        }
+        if (l->st != ST_HEAP || l->ty != TY_STRUCT || l->sd != target) {
+            err(c, x->line, x->col,
+                "expected null, a 'heap %s' variable or a call returning one", target->name);
+            return PK_NONE;
+        }
+        if (l->secret) {
+            err(c, x->line, x->col, "a secret cannot be moved into a field");
+            return PK_NONE;
+        }
+        if (!touch(c, l, U_MOVE, x->line, x->col))
+            return PK_NONE;
+        x->reg = l->idx;
+        x->vst = ST_HEAP;
+        l->dropped = 1;
+        l->moved = 1;
+        return PK_MOVE;
+    }
+    if (x->kind == E_CALL) {
+        c->heap_ok = 1;
+        check_expr(c, x, 0);
+        Func *f = x->callee;
+        if (f && f->ret_storage == ST_HEAP && f->ret_ty == TY_STRUCT && f->ret_sdef == target)
+            return PK_CALL;
+        if (f)
+            err(c, x->line, x->col, "'%s' does not return a 'heap %s'", f->name, target->name);
+        return PK_NONE;
+    }
+    err(c, x->line, x->col, "expected null, a 'heap %s' variable or a call returning one",
+        target->name);
+    return PK_NONE;
 }
 
 static void check_lit(Ctx *c, Expr *lit, StructDef *sd)
@@ -659,7 +824,10 @@ static void check_lit(Ctx *c, Expr *lit, StructDef *sd)
                 "struct '%s' has no field '%s'", sd->name, lit->fnames[i]);
             continue;
         }
-        if (f->ty == TY_STRUCT) {
+        if (f->is_heap) {
+            if (f->sdef)
+                check_heap_value(c, lit->args[i], f->sdef);
+        } else if (f->ty == TY_STRUCT) {
             if (lit->args[i]->kind == E_STRUCTLIT && f->sdef)
                 check_lit(c, lit->args[i], f->sdef);
             else
@@ -683,6 +851,8 @@ static void check_lit(Ctx *c, Expr *lit, StructDef *sd)
 /* Argument for a 'heap' parameter: a heap variable of the same type, moved. */
 static void check_move_arg(Ctx *c, Expr *a, Param *p)
 {
+    if (a->kind == E_NULL && p->ty == TY_STRUCT) /* an empty heap struct argument */
+        return;
     if (a->kind != E_VAR) {
         err(c, a->line, a->col, "the argument for 'heap' parameter '%s' must be a heap variable",
             p->name);
@@ -710,10 +880,54 @@ static void check_move_arg(Ctx *c, Expr *a, Param *p)
         err(c, a->line, a->col, "type mismatch for parameter '%s'", p->name);
         return;
     }
+    if (!touch(c, l, U_MOVE, a->line, a->col))
+        return;
     a->reg = l->idx;
     a->vst = ST_HEAP;
     l->dropped = 1;
     l->moved = 1;
+}
+
+static void check_null_operand(Ctx *c, Expr *x)
+{
+    const char *msg = "only 'heap' struct variables and 'heap' fields can be compared with null";
+    if (x->kind == E_VAR) {
+        Local *l = lookup(c, x->name);
+        if (!l) {
+            err(c, x->line, x->col, "undefined variable '%s'", x->name);
+            return;
+        }
+        if (l->dropped) {
+            err(c, x->line, x->col, "use of %s variable '%s'", gone(l), x->name);
+            return;
+        }
+        if (l->st != ST_HEAP || l->ty != TY_STRUCT) {
+            err(c, x->line, x->col, "%s", msg);
+            return;
+        }
+        touch(c, l, U_READ, x->line, x->col);
+        x->reg = l->idx;
+        x->vst = ST_HEAP;
+        return;
+    }
+    if (x->kind == E_FIELD) {
+        Local *root;
+        int off;
+        Ty ty;
+        StructDef *sd;
+        FPath fp;
+        if (!resolve_field(c, x, &root, &off, &ty, &sd, &fp))
+            return;
+        if (!fp.lastptr) {
+            err(c, x->line, x->col, "%s", msg);
+            return;
+        }
+        if (root->ty != TY_REF)
+            touch(c, root, U_READ, x->line, x->col);
+        annotate_field(c, x, root, off, &fp);
+        return;
+    }
+    err(c, x->line, x->col, "%s", msg);
 }
 
 static Ty check_expr(Ctx *c, Expr *e, int allow_void)
@@ -729,6 +943,8 @@ static Ty check_expr(Ctx *c, Expr *e, int allow_void)
         }
         if (l->dropped)
             err(c, e->line, e->col, "use of %s variable '%s'", gone(l), e->name);
+        if (l->ty != TY_REF)
+            touch(c, l, U_READ, e->line, e->col);
         if (l->ty == TY_STRUCT)
             err(c, e->line, e->col, "struct variable '%s' cannot be used as a value; "
                 "use one of its fields", e->name);
@@ -761,10 +977,17 @@ static Ty check_expr(Ctx *c, Expr *e, int allow_void)
         int off;
         Ty ty;
         StructDef *sd;
-        if (resolve_field(c, e, &root, &off, &ty, &sd)) {
+        FPath fp;
+        if (resolve_field(c, e, &root, &off, &ty, &sd, &fp)) {
+            if (root->ty != TY_REF)
+                touch(c, root, U_READ, e->line, e->col);
             if (ty == TY_STRUCT)
-                err(c, e->line, e->col, "field '%s' is a struct; use one of its fields", e->name);
-            annotate_field(e, root, off);
+                err(c, e->line, e->col,
+                    fp.lastptr ? "field '%s' is an owned pointer; use its fields, compare it with "
+                                 "null, or move it"
+                               : "field '%s' is a struct; use one of its fields",
+                    e->name);
+            annotate_field(c, e, root, off, &fp);
         }
         return TY_I32;
     }
@@ -810,9 +1033,29 @@ static Ty check_expr(Ctx *c, Expr *e, int allow_void)
     case E_NEG:
         check_expr(c, e->l, 0);
         return TY_I32;
-    case E_BIN:
+    case E_BIN: {
+        if ((e->op == OP_EQ || e->op == OP_NE) && (e->l->kind == E_NULL || e->r->kind == E_NULL)) {
+            if (e->l->kind == E_NULL && e->r->kind == E_NULL) {
+                err(c, e->line, e->col, "null cannot be compared with null");
+                return TY_I32;
+            }
+            Expr *other = e->l->kind == E_NULL ? e->r : e->l;
+            check_null_operand(c, other);
+            e->kind = E_ISNULL;
+            e->l = other;
+            e->r = NULL;
+            e->val = e->op == OP_EQ;
+            return TY_I32;
+        }
         check_expr(c, e->l, 0);
         check_expr(c, e->r, 0);
+        return TY_I32;
+    }
+    case E_NULL:
+        err(c, e->line, e->col,
+            "null can only be assigned to, passed as, or compared with a 'heap' struct value");
+        return TY_I32;
+    case E_ISNULL:
         return TY_I32;
     case E_CALL: {
         int heap_ok = c->heap_ok;
@@ -946,6 +1189,10 @@ static void check_copy_move(Ctx *c, Stmt *s, Expr *v, int is_copy)
         err(c, v->line, v->col, "type mismatch: '%s' has a different type", v->name);
         return;
     }
+    if (is_copy && s->ty == TY_STRUCT && l->sd && l->sd->has_heap) {
+        err(c, v->line, v->col, "a struct that owns 'heap' fields cannot be copied (no deep copy yet)");
+        return;
+    }
     if (is_copy && l->secret) {
         err(c, v->line, v->col, "a secret cannot be copied; move it instead");
         return;
@@ -954,6 +1201,8 @@ static void check_copy_move(Ctx *c, Stmt *s, Expr *v, int is_copy)
         err(c, v->line, v->col, "a secret can only be moved into another 'secret' variable");
         return;
     }
+    if (l->ty != TY_REF && !touch(c, l, is_copy ? U_READ : U_MOVE, v->line, v->col))
+        return;
     s->cpy = is_copy ? CP_COPY : CP_MOVE;
     s->cst = l->ty == TY_REF ? ST_HEAP : l->st; /* a reference holds a pointer, like heap */
     s->cidx = l->idx;
@@ -967,7 +1216,7 @@ static void check_copy_move(Ctx *c, Stmt *s, Expr *v, int is_copy)
 static void check_decl(Ctx *c, Stmt *s)
 {
     StructDef *sd = NULL;
-    if (s->ty == TY_STRUCT) {
+    if (s->ty == TY_STRUCT || (s->ty == TY_REF && s->arr.elem == TY_STRUCT)) {
         sd = find_struct(c, s->tyname);
         if (!sd)
             err(c, s->line, s->col, "unknown type '%s'", s->tyname);
@@ -975,9 +1224,13 @@ static void check_decl(Ctx *c, Stmt *s)
     s->sdef = sd;
     if (s->ty == TY_SLICE)
         err(c, s->line, s->col, "slice variables are not supported; slices exist as parameters");
-    if (s->ty == TY_REF)
-        err(c, s->line, s->col,
-            "reference variables are not supported; references exist as parameters");
+    if (s->ty == TY_REF && s->storage != ST_STACK)
+        err(c, s->line, s->col, "a reference variable must be 'stack'");
+    if (s->ty == TY_REF && s->secret)
+        err(c, s->line, s->col, "a reference cannot be 'secret'");
+    if (s->secret && sd && sd->has_heap)
+        err(c, s->line, s->col, "a struct that owns 'heap' fields cannot be 'secret'");
+    int new_root = -1;
     if ((s->ty == TY_STRUCT || s->ty == TY_ARRAY) && s->storage == ST_REG)
         err(c, s->line, s->col,
             "%s variable '%s' cannot be 'reg'; it lives in 'stack' or 'heap'",
@@ -1006,13 +1259,49 @@ static void check_decl(Ctx *c, Stmt *s)
         check_copy_move(c, s, copy_src, is_copy);
     } else if (s->ty == TY_ARRAY) {
         check_array_init(c, s);
-    } else if (s->ty == TY_SLICE || s->ty == TY_REF) {
+    } else if (s->ty == TY_REF) {
+        as_borrow(c, s->expr, s->arr.rmut);
+        if (s->expr->kind != E_ADDR) {
+            err(c, s->expr->line, s->expr->col,
+                "a reference variable must be initialized with &x, &mut x or another reference");
+        } else {
+            Local *root = check_borrow(c, s->expr, s->arr.elem, sd, s->arr.rmut, s->name);
+            if (root)
+                new_root = root->ty == TY_REF ? root->root : (int)(root - c->loc);
+        }
+    } else if (s->ty == TY_SLICE) {
         /* already reported */
     } else if (s->ty == TY_STRUCT) {
         if (!sd) {
             /* already reported */
         } else if (s->expr->kind == E_STRUCTLIT) {
             check_lit(c, s->expr, sd);
+        } else if (s->expr->kind == E_NULL && s->storage == ST_HEAP) {
+            s->pk = PK_NULL;
+        } else if (s->expr->kind == E_CALL && strcmp(s->expr->name, "take") == 0 &&
+                   s->expr->nargs == 1 && s->expr->args[0]->kind == E_FIELD &&
+                   s->storage == ST_HEAP && !user_func_named(c, "take")) {
+            Expr *a = s->expr->args[0];
+            Local *root;
+            int off;
+            Ty ty;
+            StructDef *tsd;
+            FPath fp;
+            if (resolve_field(c, a, &root, &off, &ty, &tsd, &fp)) {
+                if (!fp.lastptr)
+                    err(c, a->line, a->col, "take(x) needs a 'heap' field");
+                else if (tsd != sd)
+                    err(c, a->line, a->col, "type mismatch: the field holds a 'heap %s'", tsd->name);
+                else if (root->ty == TY_REF && !root->arr.rmut)
+                    err(c, a->line, a->col, "cannot take through the shared reference '%s'",
+                        root->name);
+                else {
+                    if (root->ty != TY_REF)
+                        touch(c, root, U_WRITE, a->line, a->col);
+                    annotate_field(c, a, root, off, &fp);
+                    s->pk = PK_TAKE;
+                }
+            }
         } else if (s->expr->kind == E_CALL && s->storage == ST_HEAP) {
             c->heap_ok = 1;
             check_expr(c, s->expr, 0);
@@ -1047,6 +1336,17 @@ static void check_decl(Ctx *c, Stmt *s)
     Local *l = &c->loc[c->n - 1];
     l->secret = s->secret;
     l->decl = s;
+    if (s->ty == TY_REF) {
+        l->is_local_ref = 1;
+        l->root = new_root;
+        if (new_root >= 0) {
+            Local *o = &c->loc[new_root];
+            if (s->arr.rmut)
+                o->lock_mut = 1;
+            else
+                o->lock_shared++;
+        }
+    }
     s->size = l->size;
     s->bslots = l->slots;
     if (s->storage == ST_HEAP)
@@ -1065,7 +1365,10 @@ static void check_return(Ctx *c, Stmt *s)
     if (s->expr && f->ret_ty != TY_VOID) {
         Expr *x = s->expr;
         if (f->ret_storage == ST_HEAP) {
-            if (x->kind == E_VAR) {
+            if (x->kind == E_NULL) {
+                if (f->ret_ty != TY_STRUCT)
+                    err(c, x->line, x->col, "null can only be returned as a 'heap' struct value");
+            } else if (x->kind == E_VAR) {
                 Local *l = lookup(c, x->name);
                 if (!l) {
                     err(c, x->line, x->col, "undefined variable '%s'", x->name);
@@ -1078,6 +1381,7 @@ static void check_return(Ctx *c, Stmt *s)
                 } else if (!same_type(l->ty, l->sd, f->ret_ty, f->ret_sdef)) {
                     err(c, x->line, x->col, "type mismatch in return value");
                 } else {
+                    touch(c, l, U_MOVE, x->line, x->col);
                     x->reg = l->idx;
                     x->vst = ST_HEAP;
                     l->dropped = l->moved = 1; /* ownership moves to the caller */
@@ -1104,8 +1408,10 @@ static void check_return(Ctx *c, Stmt *s)
         if (c->loc[i].secret && !c->loc[i].dropped)
             VEC_PUSH(s->wipe, s->nwipe, s->wipecap, c->loc[i].decl);
     for (int i = 0; i < c->n; i++)
-        if (c->loc[i].st == ST_HEAP && !c->loc[i].dropped)
-            VEC_PUSH(s->rel, s->nrel, s->relcap, c->loc[i].idx);
+        if (needs_release(&c->loc[i])) {
+            Release r = release_of(&c->loc[i]);
+            VEC_PUSH(s->rel, s->nrel, s->relcap, r);
+        }
 }
 
 static void check_stmt(Ctx *c, Stmt *s)
@@ -1116,11 +1422,32 @@ static void check_stmt(Ctx *c, Stmt *s)
         break;
     case S_ASSIGN: {
         Local *l = lookup(c, s->name);
+        if (l && l->ty == TY_REF && !l->dropped) { /* re-point a reference variable */
+            as_borrow(c, s->expr, l->arr.rmut);
+            if (s->expr->kind != E_ADDR) {
+                err(c, s->line, s->col,
+                    "a reference variable can only be assigned &x, &mut x or another reference");
+                break;
+            }
+            Local *root = check_borrow(c, s->expr, l->arr.elem, l->sd, l->arr.rmut, l->name);
+            if (root) {
+                int newroot = root->ty == TY_REF ? root->root : (int)(root - c->loc);
+                if (newroot != l->root)
+                    err(c, s->line, s->col,
+                        "reference '%s' cannot be re-pointed at a different variable "
+                        "(borrow through '%s' itself, e.g. &%s.field)", l->name, l->name, l->name);
+            }
+            s->reg = l->idx;
+            s->storage = l->st;
+            break;
+        }
         if (!l) {
             err(c, s->line, s->col, "undefined variable '%s'", s->name);
         } else {
             if (l->dropped)
                 err(c, s->line, s->col, "assignment to %s variable '%s'", gone(l), s->name);
+            else
+                touch(c, l, U_WRITE, s->line, s->col);
             if (l->ty == TY_STRUCT || l->ty == TY_ARRAY || l->ty == TY_SLICE)
                 err(c, s->line, s->col, "cannot assign a whole %s; assign its %s",
                     l->ty == TY_STRUCT ? "struct" : "array or slice",
@@ -1139,14 +1466,22 @@ static void check_stmt(Ctx *c, Stmt *s)
         int off;
         Ty ty;
         StructDef *sd;
-        if (resolve_field(c, s->lhs, &root, &off, &ty, &sd)) {
-            if (ty == TY_STRUCT)
-                err(c, s->line, s->col, "cannot assign a whole struct; assign its fields");
-            annotate_field(s->lhs, root, off);
+        FPath fp;
+        if (resolve_field(c, s->lhs, &root, &off, &ty, &sd, &fp)) {
+            annotate_field(c, s->lhs, root, off, &fp);
             tsec = root->secret;
             if (root->ty == TY_REF && !root->arr.rmut)
                 err(c, s->line, s->col, "cannot assign through the shared reference '%s' (use &mut)",
                     root->name);
+            if (root->ty != TY_REF)
+                touch(c, root, U_WRITE, s->line, s->col);
+            if (ty == TY_STRUCT && fp.lastptr) {
+                if (sd)
+                    s->pk = check_heap_value(c, s->expr, sd);
+                break;
+            }
+            if (ty == TY_STRUCT)
+                err(c, s->line, s->col, "cannot assign a whole struct; assign its fields");
         }
         check_expr(c, s->expr, 0);
         if (!tsec && is_secret_expr(c, s->expr))
@@ -1195,6 +1530,8 @@ static void check_stmt(Ctx *c, Stmt *s)
             err(c, s->line, s->col, "variable '%s' is already %s", s->name, gone(l));
         } else if (l->ty == TY_SLICE) {
             err(c, s->line, s->col, "'%s' is a borrowed slice and cannot be dropped", s->name);
+        } else if (!touch(c, l, U_MOVE, s->line, s->col)) {
+            /* reported */
         } else {
             s->reg = l->idx;
             s->storage = l->st;
@@ -1266,8 +1603,20 @@ static void check_block(Ctx *c, Block *b)
         if (c->loc[i].secret && !c->loc[i].dropped)
             VEC_PUSH(b->wipe, b->nwipe, b->wipecap, c->loc[i].decl);
     for (int i = saved_n; i < c->n; i++)
-        if (c->loc[i].st == ST_HEAP && !c->loc[i].dropped)
-            VEC_PUSH(b->rel, b->nrel, b->relcap, c->loc[i].idx);
+        if (needs_release(&c->loc[i])) {
+            Release r = release_of(&c->loc[i]);
+            VEC_PUSH(b->rel, b->nrel, b->relcap, r);
+        }
+    for (int i = saved_n; i < c->n; i++) { /* borrows end with their reference variable */
+        Local *r = &c->loc[i];
+        if (r->is_local_ref && r->root >= 0) {
+            Local *o = &c->loc[r->root];
+            if (r->arr.rmut)
+                o->lock_mut = 0;
+            else if (o->lock_shared > 0)
+                o->lock_shared--;
+        }
+    }
     c->n = saved_n;
     c->nreg = saved_reg;
     c->nslot = saved_slot;
@@ -1329,8 +1678,10 @@ static void check_func(Ctx *c, Func *f)
 
     /* heap parameters still owned at the end of the body are released there */
     for (int i = 0; i < f->nparams; i++)
-        if (f->params[i].storage == ST_HEAP && !c->loc[i].dropped)
-            VEC_PUSH(f->body->rel, f->body->nrel, f->body->relcap, f->params[i].idx);
+        if (needs_release(&c->loc[i])) {
+            Release r = release_of(&c->loc[i]);
+            VEC_PUSH(f->body->rel, f->body->nrel, f->body->relcap, r);
+        }
 
     if (f->ret_ty != TY_VOID && !always_returns(f->body))
         err(c, f->line, f->col, "function '%s' may reach its end without returning a value",
@@ -1410,6 +1761,18 @@ int check_program(Program *prog, const Abi *abi, int require_main)
     }
     for (int i = 0; i < prog->nstructs; i++)
         layout_struct(&c, prog->structs[i]);
+    for (int i = 0; i < prog->nstructs; i++) {
+        StructDef *sd = prog->structs[i];
+        if (sd->has_heap) {
+            prog->uses_heap = 1;
+            const char *pkg = sd->unit->package;
+            char *p2 = pkg ? xstrdup(pkg) : xstrdup("");
+            for (char *q = p2; *q; q++)
+                if (*q == ':')
+                    *q = '_';
+            sd->fsym = xsprintf("rgx_free_%s__%s", p2, sd->name);
+        }
+    }
 
     for (int i = 0; i < prog->nfuncs; i++) {
         Func *f = prog->funcs[i];
