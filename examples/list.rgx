@@ -1,0 +1,42 @@
+import std::io;
+
+struct Node {
+    value: i32,
+    heap next: Node,
+}
+
+fn push(heap list: Node, reg v: i32) -> heap Node {
+    heap n: Node = Node { value: v, next: list }
+    return(n)
+}
+
+fn print_all(stack head: &Node) -> void {
+    stack cur: &Node = head
+    std::io::print_i32(cur.value)
+    while (cur.next != null) {
+        cur = &cur.next
+        std::io::print_i32(cur.value)
+    }
+}
+
+fn reverse(heap list: Node) -> heap Node {
+    heap prev: Node = null
+    heap cur: Node = list
+    while (cur != null) {
+        heap next: Node = take(cur.next)
+        cur.next = prev
+        prev = cur
+        cur = next
+    }
+    return(prev)
+}
+
+fn main() -> reg i32 {
+    heap list: Node = Node { value: 1, next: null }
+    list = push(list, 2)
+    list = push(list, 3)
+    print_all(&list)          // 3 2 1
+    list = reverse(list)
+    print_all(&list)          // 1 2 3
+    return(0)
+}   // the list is released here

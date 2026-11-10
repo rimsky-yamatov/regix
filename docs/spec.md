@@ -174,27 +174,87 @@ largest heap value is 4096 bytes.
 * A `*` at the start of a line begins a statement (`*r = v`) rather than a
   multiplication, so write a product's `*` on the same line as its left side.
 
+## Heap fields, `null` and linked structures
+
+    struct Node {
+        value: i32,
+        heap next: Node,        // an owned, nullable pointer to another Node
+    }
+
+* A `heap` field owns a separately allocated struct (usually of the same type,
+  so lists and trees are possible). Other fields stay inline. A struct that
+  contains itself *by value* is still an error.
+* `null` is the empty owner. It can initialize a heap field or a `heap`
+  struct variable, be assigned to them, be passed to or returned from a
+  `heap` parameter or `-> heap T` function, and be compared with `==` / `!=`.
+  Only `heap` struct variables and `heap` fields can hold or be compared with
+  null.
+* Reading through an owned pointer follows it: `list.next.next.value`.
+  Reaching through a null pointer (or a null `heap` variable) stops the
+  program with exit code 101.
+* Putting a value in a heap field moves it in: `n.next = h` (a `heap`
+  variable), `n.next = make()` (a call result), `n.next = Node { ... }` (a new
+  block built in place), or `n.next = null`. What the field owned before is
+  released first. `heap x: T = take(n.next)` moves the owner out and leaves
+  the field null.
+* A `heap` struct variable can be given a new owner (`list = push(list, 1)`);
+  a value it still owns is released first, a value that was moved away is not.
+* Releasing a struct releases everything it owns, recursively: at scope end,
+  before a `return`, and by `drop` (which also zero-fills each released block).
+  A chain through the last field that points to the same struct type is walked
+  in a loop, so a long list does not use the stack; other fields (for example a
+  tree's left child) recurse, so the depth is the tree's depth.
+* A struct that owns heap fields cannot be `copy`'d (there is no deep copy
+  yet), cannot be `reg`, and cannot be `secret`. It can be moved.
+* A struct with heap fields is laid out with 8-byte alignment.
+
+## Reference variables and borrow locks
+
+    fn sum(stack head: &Node) -> reg i32 {
+        stack cur: &Node = head           // a reference variable (stack only)
+        reg total: i32 = cur.value
+        while (cur.next != null) {
+            cur = &cur.next               // borrow what the owned pointer points to
+            total = total + cur.value
+        }
+        return(total)
+    }
+
+* A reference can now also be a local `stack` variable, initialized with `&x`,
+  `&mut x`, a field borrow, or another reference. `&x.next` for a `heap` field
+  borrows the struct it points to (null stops the program with exit code 101).
+* A reference variable can be re-pointed (`cur = &cur.next`) but only at
+  something reachable from what it already borrows (itself, or the same owner).
+* While a reference variable is in scope, the variable it borrows from is
+  locked, for the rest of that block: a `&mut` reference blocks every use of
+  the owner; a shared reference blocks writes, moves, drops and `&mut`
+  borrows but allows reads. The lock ends with the reference variable's
+  block (lexical, no flow analysis), so put cursors in their own block when
+  the owner is needed again. References that come from parameters borrow from
+  the caller, who is locked for the whole call.
+* References still cannot be returned or stored in structs, so they cannot
+  outlive what they borrow.
+
 ## Implementation status (unreleased, after v0.1.0)
 
 Implemented:
 
-* Types: `i32`, structs of `i32` fields and nested structs (inline), arrays
-  `[i32; N]` / `[u8; N]`, slice and reference parameters, string literals.
+* Types: `i32`, structs (inline fields and owned `heap` fields), arrays
+  `[i32; N]` / `[u8; N]`, slice and reference parameters, reference variables,
+  string literals.
 * Variables: `reg`, `stack`, `heap`, optional `secret`; `if`/`else`, `while`,
   assignment, calls, guaranteed tail calls.
-* `drop`, `copy`, moves, ownership transfer through `heap` parameters and
-  returns, compile-time use-after-drop/move checks.
-* Borrowed references `&T` / `&mut T` as parameters, with aliasing checks.
+* `drop`, `copy`, `take`, moves, `null`, ownership transfer through `heap`
+  parameters, returns and fields, compile-time use-after-drop/move checks.
+* Borrowed references with aliasing checks and lexical borrow locks.
 * Multi-file packages with `import` and `pub`; `rgpm init/build/run`.
 * `std::io::print_i32`, `print`, `println`; `main` arguments.
 
 Known limits (planned, not implemented):
 
-* Struct `heap` fields (recursive types) still need a null value and a way to
-  hold a reference across a loop iteration (a reference that is a local
-  variable); both are next on the list.
-* Whole-value assignment `a = b`; passing structs or arrays by value;
-  arrays inside structs; `&mut [T]`; slice variables; references to array
-  elements.
+* Deep copy of structs with heap fields; whole-value assignment `a = b`;
+  passing structs or arrays by value; arrays inside structs; `&mut [T]`; slice
+  variables; references to array elements.
+* A `heap` field must hold a struct (not `i32` or an array).
 * Cross-package structs; the rest of the standard library.
 * A `reg` struct or array is rejected.

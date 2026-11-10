@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Struct `heap` fields (owned, nullable pointers) and `null`: lists and trees,
+  `take(x.f)`, assignment into heap fields, reassigning `heap` struct
+  variables, struct literals and call results as heap values, recursive release
+  (list chains are freed iteratively), null-checked access (exit code 101).
+- Reference variables (`stack cur: &Node = head`, `cur = &cur.next`) with
+  lexical borrow locks on the borrowed variable.
 - Borrowed references `&T` and `&mut T` as parameters: `&x`, `&mut x`, field
   borrows, `*r`, `*r = v`, `r.field`; shared-write, aliasing and `reg`-has-no-address
   errors. A `*` at the start of a line now begins a statement.
@@ -19,7 +25,7 @@
 - Slice parameters `&[T]` (borrowed, read-only), string literals as `&[u8]`.
 - `std::io::print` and `std::io::println` for byte slices.
 - `main` can take `stack args: &[&[u8]]` (Linux and Windows).
-- Tests: runner supports `// args:` and multi-file cases (`tests/multi/NAME.d`); 229 cases.
+- Tests: runner supports `// args:` and multi-file cases (`tests/multi/NAME.d`); 286 cases.
 
 ## v0.1.0
 
