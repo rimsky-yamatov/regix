@@ -1,0 +1,10 @@
+// expect-exit: 7
+fn main() -> reg i32 {
+    stack a: i32 = 1
+    {
+        stack r: &mut i32 = &mut a
+        *r = 4
+    }
+    a = a + 3
+    return(a)
+}

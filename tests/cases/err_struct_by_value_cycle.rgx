@@ -1,0 +1,12 @@
+// expect-error: contains itself by value
+struct A {
+    b: B,
+}
+
+struct B {
+    a: A,
+}
+
+fn main() -> reg i32 {
+    return(0)
+}

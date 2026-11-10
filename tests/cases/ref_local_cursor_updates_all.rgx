@@ -1,0 +1,27 @@
+// expect-exit: 6
+struct Node {
+    value: i32,
+    heap next: Node,
+}
+
+fn push(heap list: Node, reg v: i32) -> heap Node {
+    heap n: Node = Node { value: v, next: list }
+    return(n)
+}
+
+fn bump_all(stack head: &mut Node) -> void {
+    stack cur: &mut Node = head
+    cur.value = cur.value + 1
+    while (cur.next != null) {
+        cur = &mut cur.next
+        cur.value = cur.value + 1
+    }
+}
+
+fn main() -> reg i32 {
+    heap a: Node = Node { value: 1, next: null }
+    heap b: Node = push(a, 2)
+    heap c: Node = push(b, 3)
+    bump_all(&mut c)
+    return(c.value + c.next.value + c.next.next.value - 3)
+}

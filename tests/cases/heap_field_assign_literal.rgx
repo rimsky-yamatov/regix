@@ -1,0 +1,11 @@
+// expect-exit: 5
+struct Node {
+    value: i32,
+    heap next: Node,
+}
+
+fn main() -> reg i32 {
+    heap l: Node = Node { value: 1, next: null }
+    l.next = Node { value: 5, next: null }
+    return(l.next.value)
+}

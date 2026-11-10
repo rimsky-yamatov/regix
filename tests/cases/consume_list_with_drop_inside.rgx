@@ -1,0 +1,17 @@
+// expect-exit: 1
+struct Node {
+    value: i32,
+    heap next: Node,
+}
+
+fn consume(heap l: Node) -> reg i32 {
+    reg v: i32 = l.value
+    drop(l)
+    return(v)
+}
+
+fn main() -> reg i32 {
+    heap tail: Node = Node { value: 2, next: null }
+    heap head: Node = Node { value: 1, next: tail }
+    return(consume(head))
+}

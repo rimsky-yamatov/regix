@@ -1,0 +1,7 @@
+// expect-error: is borrowed by a reference variable
+fn main() -> reg i32 {
+    stack a: i32 = 1
+    stack r1: &mut i32 = &mut a
+    stack r2: &mut i32 = &mut a
+    return(0)
+}

@@ -1,0 +1,11 @@
+// expect-error: take(x) needs a 'heap' field
+struct Node {
+    value: i32,
+    heap next: Node,
+}
+
+fn main() -> reg i32 {
+    heap l: Node = Node { value: 1, next: null }
+    heap t: Node = take(l.value)
+    return(0)
+}

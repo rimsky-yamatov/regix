@@ -1,0 +1,11 @@
+// expect-error: use of moved variable 'a'
+struct Node {
+    value: i32,
+    heap next: Node,
+}
+
+fn main() -> reg i32 {
+    heap a: Node = Node { value: 1, next: null }
+    heap b: Node = Node { value: 2, next: a }
+    return(a.value)
+}

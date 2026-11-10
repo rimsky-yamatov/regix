@@ -1,0 +1,15 @@
+// expect-error: expected null, a 'heap B' variable or a call returning one
+struct A {
+    heap b: B,
+}
+
+struct B {
+    x: i32,
+}
+
+fn main() -> reg i32 {
+    heap other: A = A { b: null }
+    heap a: A = A { b: null }
+    a.b = other
+    return(0)
+}

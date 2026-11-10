@@ -1,0 +1,19 @@
+// expect-exit: 12
+struct A {
+    x: i32,
+}
+
+struct B {
+    y: i32,
+}
+
+struct Pair {
+    heap a: A,
+    id: i32,
+    heap b: B,
+}
+
+fn main() -> reg i32 {
+    heap p: Pair = Pair { a: A { x: 4 }, id: 3, b: B { y: 5 } }
+    return(p.a.x + p.id + p.b.y)
+}

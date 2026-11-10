@@ -1,0 +1,11 @@
+// expect-error: owns 'heap' fields cannot be copied
+struct Node {
+    value: i32,
+    heap next: Node,
+}
+
+fn main() -> reg i32 {
+    stack a: Node = Node { value: 1, next: null }
+    stack b: Node = copy(a)
+    return(0)
+}

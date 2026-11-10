@@ -1,0 +1,7 @@
+// expect-error: cannot be moved or dropped
+fn main() -> reg i32 {
+    stack a: i32 = 1
+    stack r: &i32 = &a
+    drop(a)
+    return(0)
+}

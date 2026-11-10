@@ -1,0 +1,14 @@
+// expect-exit: 7
+struct Cell {
+    v: i32,
+}
+
+struct Holder {
+    heap cell: Cell,
+}
+
+fn main() -> reg i32 {
+    stack a: Holder = Holder { cell: Cell { v: 7 } }
+    stack b: Holder = a
+    return(b.cell.v)
+}

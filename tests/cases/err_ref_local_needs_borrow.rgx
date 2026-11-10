@@ -1,0 +1,5 @@
+// expect-error: must be initialized with &x
+fn main() -> reg i32 {
+    stack r: &i32 = 5
+    return(0)
+}

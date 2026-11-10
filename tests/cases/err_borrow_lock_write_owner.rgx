@@ -1,0 +1,7 @@
+// expect-error: is borrowed by a reference variable and cannot be modified
+fn main() -> reg i32 {
+    stack a: i32 = 1
+    stack r: &i32 = &a
+    a = 5
+    return(0)
+}

@@ -1,0 +1,15 @@
+// expect-error: cannot be moved or dropped
+struct Node {
+    value: i32,
+    heap next: Node,
+}
+
+fn take_it(heap n: Node) -> void {
+}
+
+fn main() -> reg i32 {
+    heap l: Node = Node { value: 1, next: null }
+    stack r: &Node = &l
+    take_it(l)
+    return(0)
+}

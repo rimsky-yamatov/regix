@@ -1,0 +1,12 @@
+// expect-error: only 'heap' struct variables and 'heap' fields can be compared with null
+struct P {
+    x: i32,
+}
+
+fn main() -> reg i32 {
+    stack p: P = P { x: 1 }
+    if (p == null) {
+        return(1)
+    }
+    return(0)
+}

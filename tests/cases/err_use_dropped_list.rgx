@@ -1,0 +1,11 @@
+// expect-error: use of dropped variable 'l'
+struct Node {
+    value: i32,
+    heap next: Node,
+}
+
+fn main() -> reg i32 {
+    heap l: Node = Node { value: 1, next: null }
+    drop(l)
+    return(l.value)
+}

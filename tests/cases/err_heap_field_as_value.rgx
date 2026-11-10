@@ -1,0 +1,11 @@
+// expect-error: is an owned pointer
+struct Node {
+    value: i32,
+    heap next: Node,
+}
+
+fn main() -> reg i32 {
+    heap l: Node = Node { value: 1, next: null }
+    reg x: i32 = l.next
+    return(0)
+}

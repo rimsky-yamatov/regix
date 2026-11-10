@@ -1,0 +1,8 @@
+// expect-error: cannot be re-pointed at a different variable
+fn main() -> reg i32 {
+    stack a: i32 = 1
+    stack b: i32 = 2
+    stack r: &i32 = &a
+    r = &b
+    return(0)
+}

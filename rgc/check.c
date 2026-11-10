@@ -1809,7 +1809,8 @@ int check_program(Program *prog, const Abi *abi, int require_main)
             for (char *q = p2; *q; q++)
                 if (*q == ':')
                     *q = '_';
-            sd->fsym = xsprintf("rgx_free_%s__%s", p2, sd->name);
+            sd->fsym = pkg ? xsprintf("rgx_free_%s__%s", p2, sd->name)
+                           : xsprintf("rgx_free_%s", sd->name);
         }
     }
 

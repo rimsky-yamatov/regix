@@ -1,0 +1,12 @@
+// expect-error: cannot be modified
+struct Node {
+    value: i32,
+    heap next: Node,
+}
+
+fn main() -> reg i32 {
+    heap l: Node = Node { value: 1, next: null }
+    stack r: &Node = &l
+    l.value = 2
+    return(0)
+}

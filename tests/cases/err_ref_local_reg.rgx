@@ -1,0 +1,6 @@
+// expect-error: a reference variable must be 'stack'
+fn main() -> reg i32 {
+    stack a: i32 = 1
+    reg r: &i32 = &a
+    return(0)
+}

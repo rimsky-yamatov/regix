@@ -1,0 +1,13 @@
+// expect-error: cannot assign through the shared reference 'n'
+struct Node {
+    value: i32,
+    heap next: Node,
+}
+
+fn f(stack n: &Node) -> void {
+    n.next = null
+}
+
+fn main() -> reg i32 {
+    return(0)
+}

@@ -1,0 +1,13 @@
+// expect-exit: 2
+struct Node {
+    value: i32,
+    heap next: Node,
+}
+
+fn main() -> reg i32 {
+    heap tail: Node = Node { value: 2, next: null }
+    heap head: Node = Node { value: 1, next: tail }
+    stack cur: &Node = &head
+    cur = &cur.next
+    return(cur.value)
+}
