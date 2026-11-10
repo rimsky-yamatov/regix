@@ -1,9 +1,0 @@
-// expect-error: not implemented yet
-struct Node {
-    value: i32,
-    heap next: Node,
-}
-
-fn main() -> reg i32 {
-    return(0)
-}

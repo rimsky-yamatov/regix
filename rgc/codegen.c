@@ -106,6 +106,8 @@ static int is_var_like(Expr *e) { return e->kind == E_VAR || e->kind == E_FIELD;
 /* Operands usable directly as a source and untouched by calls. */
 static int is_simple(Expr *e)
 {
+    if (e->kind == E_FIELD && e->ndref > 0)
+        return 0;
     return e->kind == E_INT || (is_var_like(e) && e->vst != ST_HEAP);
 }
 
@@ -124,6 +126,26 @@ static void operand(Expr *e, char *buf, size_t sz)
 static int is_reg_or_imm(Expr *e)
 {
     return e->kind == E_INT || (e->kind == E_VAR && e->vst == ST_REG);
+}
+
+/* r = address of the struct holding the final field of `e`: the variable's
+ * storage, then every owned pointer on the way (each checked for null). */
+static void load_path_base(const char *r, Expr *e)
+{
+    char slot[64];
+    if (e->vst == ST_STACK) {
+        emit("lea %s, [rbp-%d]", r, 8 * (e->reg + e->bslots));
+    } else {
+        qword_slot(slot, sizeof slot, e->reg);
+        emit("mov %s, %s", r, slot);
+        emit("test %s, %s", r, r);
+        emit("jz rgx_rt_panic");
+    }
+    for (int i = 0; i < e->ndref; i++) {
+        emit("mov %s, QWORD PTR [%s+%d]", r, r, e->dref[i]);
+        emit("test %s, %s", r, r);
+        emit("jz rgx_rt_panic");
+    }
 }
 
 static void gen_expr(Expr *e);
@@ -217,18 +239,38 @@ static void set_slice_regs(Expr *a, int ar)
 }
 
 /* Pass the address of a borrowed variable or field in argument register `ar`. */
-static void set_ref_reg(Expr *a, int ar)
+static void gen_borrow_addr(Expr *a, const char *r)
 {
     char slot[64];
-    const char *r = abi->arg64[ar];
-    if (a->vst == ST_HEAP) {          /* heap value or reference: the slot holds a pointer */
-        qword_slot(slot, sizeof slot, a->reg);
-        emit("mov %s, %s", r, slot);
-        if (a->foff)
-            emit("add %s, %d", r, a->foff);
-    } else {                          /* stack value: address inside the frame */
-        emit("lea %s, [rbp-%d]", r, 8 * (a->reg + a->bslots) - a->foff);
+    if (a->ndref == 0 && !a->lastptr) {
+        if (a->vst == ST_HEAP) {      /* heap value or reference: the slot holds a pointer */
+            qword_slot(slot, sizeof slot, a->reg);
+            emit("mov %s, %s", r, slot);
+            emit("test %s, %s", r, r);
+            emit("jz rgx_rt_panic");
+            if (a->foff)
+                emit("add %s, %d", r, a->foff);
+        } else {                      /* stack value: address inside the frame */
+            emit("lea %s, [rbp-%d]", r, 8 * (a->reg + a->bslots) - a->foff);
+        }
+        return;
     }
+    load_path_base("r11", a);
+    if (a->lastptr) {                 /* borrow what the owned pointer points to */
+        emit("mov r11, QWORD PTR [r11+%d]", a->foff);
+        emit("test r11, r11");
+        emit("jz rgx_rt_panic");
+        emit("mov %s, r11", r);
+    } else if (a->foff) {
+        emit("lea %s, [r11+%d]", r, a->foff);
+    } else {
+        emit("mov %s, r11", r);
+    }
+}
+
+static void set_ref_reg(Expr *a, int ar)
+{
+    gen_borrow_addr(a, abi->arg64[ar]);
 }
 
 static void setup_args(Expr *call)
@@ -252,8 +294,12 @@ static void setup_args(Expr *call)
         int ar = call->callee->params[i].areg;
         switch (arg_kind(call, i)) {
         case A_HEAP:
-            qword_slot(buf, sizeof buf, call->args[i]->reg);
-            emit("mov %s, %s", abi->arg64[ar], buf);
+            if (call->args[i]->kind == E_NULL) {
+                emit("mov %s, 0", abi->arg64[ar]);
+            } else {
+                qword_slot(buf, sizeof buf, call->args[i]->reg);
+                emit("mov %s, %s", abi->arg64[ar], buf);
+            }
             break;
         case A_SIMPLE:
             operand(call->args[i], buf, sizeof buf);
@@ -346,17 +392,39 @@ static void gen_expr(Expr *e)
     switch (e->kind) {
     case E_INT: emit("mov eax, %ld", e->val); break;
     case E_VAR:
-    case E_FIELD:
         if (e->vst == ST_HEAP) {
             qword_slot(slot, sizeof slot, e->reg);
             emit("mov r11, %s", slot);
-            dword_via(buf, sizeof buf, "r11", e->kind == E_FIELD ? e->foff : 0);
-            emit("mov eax, %s", buf);
+            emit("mov eax, DWORD PTR [r11]");
         } else {
             operand(e, buf, sizeof buf);
             emit("mov eax, %s", buf);
         }
         break;
+    case E_FIELD:
+        if (e->vst == ST_STACK && e->ndref == 0) {
+            operand(e, buf, sizeof buf);
+            emit("mov eax, %s", buf);
+        } else {
+            load_path_base("r11", e);
+            dword_via(buf, sizeof buf, "r11", e->foff);
+            emit("mov eax, %s", buf);
+        }
+        break;
+    case E_ISNULL: {
+        Expr *x = e->l;
+        if (x->kind == E_VAR) {
+            qword_slot(slot, sizeof slot, x->reg);
+            emit("mov rax, %s", slot);
+        } else {
+            load_path_base("r11", x);
+            emit("mov rax, QWORD PTR [r11+%d]", x->foff);
+        }
+        emit("test rax, rax");
+        emit(e->val ? "sete al" : "setne al");
+        emit("movzx eax, al");
+        break;
+    }
     case E_INDEX:
         gen_index_prep(e);
         if (e->ai.elem == TY_U8)
@@ -444,12 +512,36 @@ static Expr *lit_value(Expr *lit, const char *name)
     return NULL;
 }
 
+/* Store an owned pointer (null, a moved heap variable, or a call result) at
+ * byte `off` of a stack or heap struct. */
+static void gen_store_ptr(Storage st, int idx, int bslots, int off, Expr *x)
+{
+    char slot[64];
+    if (x->kind == E_NULL) {
+        emit("xor eax, eax");
+    } else if (x->kind == E_VAR) {
+        qword_slot(slot, sizeof slot, x->reg);
+        emit("mov rax, %s", slot);
+    } else {
+        gen_expr(x);                 /* a call: the owned pointer comes back in rax */
+    }
+    if (st == ST_STACK) {
+        emit("mov QWORD PTR [rbp-%d], rax", 8 * (idx + bslots) - off);
+    } else {
+        qword_slot(slot, sizeof slot, idx);
+        emit("mov r11, %s", slot);
+        emit("mov QWORD PTR [r11+%d], rax", off);
+    }
+}
+
 static void gen_struct_init(Storage st, int idx, int bslots, StructDef *sd, Expr *lit, int base)
 {
     for (int i = 0; i < sd->nfields; i++) {
         Field *f = &sd->fields[i];
         Expr *v = lit_value(lit, f->name);
-        if (f->ty == TY_STRUCT)
+        if (f->is_heap)
+            gen_store_ptr(st, idx, bslots, base + f->offset, v);
+        else if (f->ty == TY_STRUCT)
             gen_struct_init(st, idx, bslots, f->sdef, v, base + f->offset);
         else
             gen_store_mem(st, idx, bslots, base + f->offset, v);
@@ -526,6 +618,8 @@ static void gen_copy_decl(Stmt *s)
     } else {
         qword_slot(slot, sizeof slot, s->cidx);
         emit("mov r8, %s", slot);
+        emit("test r8, r8");               /* the source may be a null heap struct */
+        emit("jz rgx_rt_panic");
     }
     if (s->storage == ST_STACK) {
         emit("lea r9, [rbp-%d]", 8 * (s->reg + s->bslots));
@@ -553,6 +647,26 @@ static void gen_decl(Stmt *s)
         gen_copy_decl(s);
         return;
     }
+    if (s->ty == TY_REF) {                 /* reference variable: store the borrowed address */
+        gen_borrow_addr(s->expr, "r10");
+        qword_slot(slot, sizeof slot, s->reg);
+        emit("mov %s, r10", slot);
+        return;
+    }
+    if (s->pk == PK_NULL) {
+        qword_slot(slot, sizeof slot, s->reg);
+        emit("mov %s, 0", slot);
+        return;
+    }
+    if (s->pk == PK_TAKE) {                /* move the owned pointer out of a field */
+        Expr *a = s->expr->args[0];
+        load_path_base("r9", a);
+        emit("mov r10, QWORD PTR [r9+%d]", a->foff);
+        emit("mov QWORD PTR [r9+%d], 0", a->foff);
+        qword_slot(slot, sizeof slot, s->reg);
+        emit("mov %s, r10", slot);
+        return;
+    }
     if (s->ty == TY_ARRAY) {
         gen_array_init(s);
     } else if (s->storage == ST_HEAP) {
@@ -575,13 +689,34 @@ static void gen_decl(Stmt *s)
     }
 }
 
-static void gen_release(const int *rel, int n)
+/* r10 = address of a struct; release every owned chain inside it (not the
+ * struct's own storage). `zero` also clears the released blocks. */
+static void emit_free_chain(StructDef *sd, int zero)
+{
+    if (sd && sd->has_heap) {
+        emit("mov r11d, %d", zero);
+        emit("call %s", sd->fsym);
+    }
+}
+
+static void gen_release(const Release *rel, int n)
 {
     char slot[64];
     for (int i = n - 1; i >= 0; i--) {
-        qword_slot(slot, sizeof slot, rel[i]);
-        emit("mov r10, %s", slot);
-        emit("call rgx_rt_free");
+        const Release *r = &rel[i];
+        if (r->is_heap) {
+            int l_skip = label_seq++;
+            qword_slot(slot, sizeof slot, r->idx);
+            emit("mov r10, %s", slot);
+            emit("test r10, r10");     /* a heap struct may be null */
+            emit_jump("jz", l_skip);
+            emit_free_chain(r->sd, 0);
+            emit("call rgx_rt_free");
+            label_def(l_skip);
+        } else {                        /* a stack struct that owns heap fields */
+            emit("lea r10, [rbp-%d]", 8 * (r->idx + r->bslots));
+            emit_free_chain(r->sd, 0);
+        }
     }
 }
 
@@ -607,21 +742,32 @@ static void gen_zero(Stmt *s, int release)
         emit("xor %s, %s", abi->pool32[s->reg], abi->pool32[s->reg]);
         break;
     case ST_STACK:
+        if (release && s->sdef && s->sdef->has_heap) {
+            emit("lea r10, [rbp-%d]", 8 * (s->reg + s->bslots));
+            emit_free_chain(s->sdef, 1);   /* owned chains first, then the bytes */
+        }
         for (int off = 0; off < s->size; off += 4) {
             dword_at(mem, sizeof mem, s->reg, s->bslots, off);
             emit("mov %s, 0", mem);
         }
         break;
-    case ST_HEAP:
+    case ST_HEAP: {
+        int l_skip = label_seq++;
         qword_slot(slot, sizeof slot, s->reg);
         emit("mov r10, %s", slot);
+        emit("test r10, r10");             /* a heap struct may be null */
+        emit_jump("jz", l_skip);
+        if (release)
+            emit_free_chain(s->sdef, 1);
         for (int off = 0; off < s->size; off += 4) {
             dword_via(mem, sizeof mem, "r10", off);
             emit("mov %s, 0", mem);
         }
         if (release)
             emit("call rgx_rt_free");
+        label_def(l_skip);
         break;
+    }
     default:
         break;
     }
@@ -637,6 +783,45 @@ static void gen_wipe(Stmt **list, int n)
 {
     for (int i = n - 1; i >= 0; i--)
         gen_zero(list[i], 0);
+}
+
+/* `x.f = value` for an i32 field, following owned pointers and checking null. */
+static void gen_store_field(Expr *lhs, Expr *rhs)
+{
+    char mem[64];
+    if (lhs->vst == ST_STACK && lhs->ndref == 0) {
+        gen_store_mem(ST_STACK, lhs->reg, lhs->bslots, lhs->foff, rhs);
+        return;
+    }
+    gen_expr(rhs);
+    load_path_base("r11", lhs);
+    dword_via(mem, sizeof mem, "r11", lhs->foff);
+    emit("mov %s, eax", mem);
+}
+
+/* `x.next = null | heap_var | call()`: release what the field owned, then store
+ * the new owner. The release routines keep every register. */
+static void gen_ptr_assign(Stmt *s)
+{
+    Expr *lhs = s->lhs, *x = s->expr;
+    char slot[64];
+    int l_skip = label_seq++;
+    if (s->pk == PK_NULL) {
+        emit("xor eax, eax");
+    } else if (s->pk == PK_MOVE) {
+        qword_slot(slot, sizeof slot, x->reg);
+        emit("mov rax, %s", slot);
+    } else {
+        gen_expr(x);                       /* call: new owner in rax */
+    }
+    load_path_base("r9", lhs);
+    emit("mov r10, QWORD PTR [r9+%d]", lhs->foff);
+    emit("test r10, r10");
+    emit_jump("jz", l_skip);
+    emit_free_chain(lhs->sdef, 0);
+    emit("call rgx_rt_free");
+    label_def(l_skip);
+    emit("mov QWORD PTR [r9+%d], rax", lhs->foff);
 }
 
 static void gen_epilogue(void)
@@ -682,10 +867,43 @@ static void gen_stmt(Stmt *s)
         gen_decl(s);
         break;
     case S_ASSIGN:
-        gen_store_var(s->storage, s->reg, s->expr);
+        if (s->pk && s->storage == ST_HEAP) {     /* heap struct variable: new owner */
+            char slot[64];
+            if (s->pk == PK_NULL) {
+                emit("xor eax, eax");
+            } else if (s->pk == PK_MOVE) {
+                qword_slot(slot, sizeof slot, s->expr->reg);
+                emit("mov rax, %s", slot);
+            } else {
+                gen_expr(s->expr);
+            }
+            qword_slot(slot, sizeof slot, s->reg);
+            if (s->adopt) {                     /* release what it owned */
+                int l_skip = label_seq++;
+                emit("mov r10, %s", slot);
+                emit("test r10, r10");
+                emit_jump("jz", l_skip);
+                emit_free_chain(s->sdef, 0);
+                emit("call rgx_rt_free");
+                label_def(l_skip);
+            }
+            emit("mov %s, rax", slot);
+            break;
+        }
+        if (s->expr->kind == E_ADDR) {       /* re-point a reference variable */
+            char slot[64];
+            gen_borrow_addr(s->expr, "r10");
+            qword_slot(slot, sizeof slot, s->reg);
+            emit("mov %s, r10", slot);
+        } else {
+            gen_store_var(s->storage, s->reg, s->expr);
+        }
         break;
     case S_FASSIGN:
-        gen_store_mem(s->lhs->vst, s->lhs->reg, s->lhs->bslots, s->lhs->foff, s->expr);
+        if (s->pk)
+            gen_ptr_assign(s);
+        else
+            gen_store_field(s->lhs, s->expr);
         break;
     case S_IASSIGN:
         gen_index_assign(s);
@@ -741,6 +959,8 @@ static void gen_stmt(Stmt *s)
                 char slot[64];       /* move the owned pointer out */
                 qword_slot(slot, sizeof slot, s->expr->reg);
                 emit("mov rax, %s", slot);
+            } else if (s->expr && s->expr->kind == E_NULL) {
+                emit("xor eax, eax");
             } else if (s->expr) {
                 gen_expr(s->expr);
             }
@@ -979,6 +1199,119 @@ static void gen_heap_runtime(void)
         emit("ret");
         fputs("rgx_rt_free ENDP\n\n", out);
     }
+}
+
+/* ---- release routines for structs that own heap fields ---- */
+
+typedef struct {
+    int off;
+    StructDef *target;
+} PtrField;
+
+static void collect_ptrs(StructDef *sd, int base, PtrField **v, int *n, int *cap)
+{
+    for (int i = 0; i < sd->nfields; i++) {
+        Field *f = &sd->fields[i];
+        if (f->is_heap) {
+            PtrField p = {base + f->offset, f->sdef};
+            VEC_PUSH(*v, *n, *cap, p);
+        } else if (f->ty == TY_STRUCT && f->sdef && f->sdef->has_heap) {
+            collect_ptrs(f->sdef, base + f->offset, v, n, cap);
+        }
+    }
+}
+
+/* If r9d (the clear flag) is set, zero `size` bytes at [base]. Uses rcx. */
+static void gen_zero_if_flag(const char *base, int size)
+{
+    int l_skip = label_seq++, l_loop = label_seq++;
+    emit("test r9d, r9d");
+    emit_jump("jz", l_skip);
+    emit("mov ecx, %d", size);
+    label_def(l_loop);
+    emit("mov BYTE PTR [%s+rcx-1], 0", base);
+    emit("dec ecx");
+    emit_jump("jnz", l_loop);
+    label_def(l_skip);
+}
+
+/*
+ * rgx_free_<Struct>: r10 = address of a struct, r11d = clear flag. Releases
+ * every block the struct owns, recursively (the struct's own storage is the
+ * caller's business). Keeps all registers. A chain through the last field that
+ * points to the same struct type (a list's `next`) is walked in a loop, so a
+ * long list does not recurse.
+ */
+static void gen_free_routine(StructDef *sd)
+{
+    PtrField *pf = NULL;
+    int n = 0, cap = 0;
+    collect_ptrs(sd, 0, &pf, &n, &cap);
+    if (abi->windows)
+        fprintf(out, "%s PROC\n", sd->fsym);
+    else
+        fprintf(out, "%s:\n", sd->fsym);
+    emit("push rax");
+    emit("push rcx");
+    emit("push rdx");
+    emit("push r8");
+    emit("push r9");
+    emit("push r10");
+    emit("push r11");
+    emit("mov r8, r10");
+    emit("mov r9d, r11d");
+    int last_self = n > 0 && pf[n - 1].target == sd;
+    int plain = last_self ? n - 1 : n;
+    int l_node = 0, l_done = 0, l_nofree = 0;
+    if (last_self) {
+        l_node = label_seq++;
+        l_done = label_seq++;
+        l_nofree = label_seq++;
+        emit("xor edx, edx");              /* edx: 0 for the first node, 1 for children */
+        label_def(l_node);
+    }
+    for (int i = 0; i < plain; i++) {
+        int l_skip = label_seq++;
+        emit("mov r10, QWORD PTR [r8+%d]", pf[i].off);
+        emit("test r10, r10");
+        emit_jump("jz", l_skip);
+        if (pf[i].target && pf[i].target->has_heap) {
+            emit("mov r11d, r9d");
+            emit("call %s", pf[i].target->fsym);
+        }
+        gen_zero_if_flag("r10", pf[i].target ? pf[i].target->size : 0);
+        emit("call rgx_rt_free");
+        emit("mov QWORD PTR [r8+%d], 0", pf[i].off);
+        label_def(l_skip);
+    }
+    if (last_self) {
+        int off = pf[n - 1].off;
+        emit("mov rax, QWORD PTR [r8+%d]", off);
+        emit("mov QWORD PTR [r8+%d], 0", off);
+        emit("test rdx, rdx");
+        emit_jump("jz", l_nofree);
+        gen_zero_if_flag("r8", sd->size);
+        emit("mov r10, r8");
+        emit("call rgx_rt_free");
+        label_def(l_nofree);
+        emit("test rax, rax");
+        emit_jump("jz", l_done);
+        emit("mov r8, rax");
+        emit("mov edx, 1");
+        emit_jump("jmp", l_node);
+        label_def(l_done);
+    }
+    emit("pop r11");
+    emit("pop r10");
+    emit("pop r9");
+    emit("pop r8");
+    emit("pop rdx");
+    emit("pop rcx");
+    emit("pop rax");
+    emit("ret");
+    if (abi->windows)
+        fprintf(out, "%s ENDP\n", sd->fsym);
+    fputc('\n', out);
 }
 
 /* Jumped to when an index is out of range: exit code 101. */
@@ -1338,6 +1671,9 @@ void codegen_program(Program *prog, const Abi *a, FILE *o)
 
     if (prog->uses_heap)
         gen_heap_runtime();
+    for (int i = 0; i < prog->nstructs; i++)
+        if (prog->structs[i]->has_heap)
+            gen_free_routine(prog->structs[i]);
     if (prog->uses_panic)
         gen_panic_runtime();
     if (prog->uses_print)

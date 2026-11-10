@@ -1205,6 +1205,8 @@ static void check_copy_move(Ctx *c, Stmt *s, Expr *v, int is_copy)
         return;
     s->cpy = is_copy ? CP_COPY : CP_MOVE;
     s->cst = l->ty == TY_REF ? ST_HEAP : l->st; /* a reference holds a pointer, like heap */
+    if (s->cst == ST_HEAP)
+        c->prog->uses_panic = 1;
     s->cidx = l->idx;
     s->cbs = l->slots;
     if (!is_copy) {
@@ -1441,6 +1443,19 @@ static void check_stmt(Ctx *c, Stmt *s)
             s->storage = l->st;
             break;
         }
+        if (l && l->ty == TY_STRUCT && l->st == ST_HEAP && !(l->dropped && !l->moved)) {
+            /* a heap struct variable can be given a new owner (null, a moved heap
+             * variable or a call result); a value it still owns is released first */
+            s->pk = check_heap_value(c, s->expr, l->sd);
+            touch(c, l, U_WRITE, s->line, s->col);
+                s->sdef = l->sd;
+            s->adopt = !l->dropped;
+            l->dropped = 0;
+            l->moved = 0;
+            s->reg = l->idx;
+            s->storage = l->st;
+            break;
+        }
         if (!l) {
             err(c, s->line, s->col, "undefined variable '%s'", s->name);
         } else {
@@ -1476,6 +1491,7 @@ static void check_stmt(Ctx *c, Stmt *s)
             if (root->ty != TY_REF)
                 touch(c, root, U_WRITE, s->line, s->col);
             if (ty == TY_STRUCT && fp.lastptr) {
+                s->lhs->sdef = sd;
                 if (sd)
                     s->pk = check_heap_value(c, s->expr, sd);
                 break;
@@ -1536,6 +1552,7 @@ static void check_stmt(Ctx *c, Stmt *s)
             s->reg = l->idx;
             s->storage = l->st;
             s->ty = l->ty;
+            s->sdef = l->sd;
             s->size = l->size;
             s->bslots = l->slots;
             l->dropped = 1;

@@ -1,4 +1,4 @@
-// expect-error: type mismatch for reference parameter
+// expect-error: type mismatch for reference 'p'
 struct P {
     x: i32,
 }
