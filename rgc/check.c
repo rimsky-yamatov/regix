@@ -761,6 +761,8 @@ static void annotate_field(Ctx *c, Expr *e, Local *root, int off, const FPath *f
 
 /* A value for a 'heap Target' slot: null, a heap variable (moved), or a call
  * that returns one. Returns a PK_ constant, or PK_NONE after an error. */
+static void check_lit(Ctx *c, Expr *lit, StructDef *sd);
+
 static int check_heap_value(Ctx *c, Expr *x, StructDef *target)
 {
     if (x->kind == E_NULL)
@@ -791,6 +793,13 @@ static int check_heap_value(Ctx *c, Expr *x, StructDef *target)
         l->dropped = 1;
         l->moved = 1;
         return PK_MOVE;
+    }
+    if (x->kind == E_STRUCTLIT) {
+        check_lit(c, x, target);
+        x->reg = c->nslot++;          /* hidden slot for the new block while it is filled */
+        if (c->nslot > c->maxslot)
+            c->maxslot = c->nslot;
+        return PK_LIT;
     }
     if (x->kind == E_CALL) {
         c->heap_ok = 1;
@@ -853,6 +862,19 @@ static void check_move_arg(Ctx *c, Expr *a, Param *p)
 {
     if (a->kind == E_NULL && p->ty == TY_STRUCT) /* an empty heap struct argument */
         return;
+    if (p->ty == TY_STRUCT && a->kind == E_STRUCTLIT) { /* a new heap value built in place */
+        check_heap_value(c, a, p->sdef);
+        return;
+    }
+    if (a->kind == E_CALL) { /* ownership of a call's result moves straight in */
+        c->heap_ok = 1;
+        check_expr(c, a, 0);
+        Func *g = a->callee;
+        if (g && (g->ret_storage != ST_HEAP || g->ret_ty != p->ty || g->ret_sdef != p->sdef))
+            err(c, a->line, a->col, "'%s' does not return the 'heap' type parameter '%s' expects",
+                g->name, p->name);
+        return;
+    }
     if (a->kind != E_VAR) {
         err(c, a->line, a->col, "the argument for 'heap' parameter '%s' must be a heap variable",
             p->name);
@@ -1448,7 +1470,7 @@ static void check_stmt(Ctx *c, Stmt *s)
              * variable or a call result); a value it still owns is released first */
             s->pk = check_heap_value(c, s->expr, l->sd);
             touch(c, l, U_WRITE, s->line, s->col);
-                s->sdef = l->sd;
+            s->sdef = l->sd;
             s->adopt = !l->dropped;
             l->dropped = 0;
             l->moved = 0;

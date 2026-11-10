@@ -1,0 +1,27 @@
+// expect-exit: 0
+struct Tree {
+    value: i32,
+    heap left: Tree,
+    heap right: Tree,
+}
+
+fn node(reg v: i32, heap l: Tree, heap r: Tree) -> heap Tree {
+    heap t: Tree = Tree { value: v, left: l, right: r }
+    return(t)
+}
+
+fn build(reg depth: i32) -> heap Tree {
+    if (depth == 0) {
+        return(null)
+    }
+    return(node(depth, build(depth - 1), build(depth - 1)))
+}
+
+fn main() -> reg i32 {
+    reg i: i32 = 0
+    while (i < 20) {
+        heap t: Tree = build(10)
+        i = i + 1
+    }
+    return(0)
+}

@@ -149,6 +149,8 @@ static void load_path_base(const char *r, Expr *e)
 }
 
 static void gen_expr(Expr *e);
+static void gen_alloc(int size, int slot_idx);
+static void gen_struct_init(Storage st, int idx, int bslots, StructDef *sd, Expr *lit, int base);
 
 /* ---- arrays and slices ---- */
 
@@ -191,6 +193,9 @@ enum { A_COMPLEX, A_SIMPLE, A_HEAP, A_SLICE, A_REF };
 static int arg_kind(Expr *call, int i)
 {
     Param *p = &call->callee->params[i];
+    if (p->storage == ST_HEAP && p->ty != TY_SLICE &&
+        (call->args[i]->kind == E_CALL || call->args[i]->kind == E_STRUCTLIT))
+        return A_COMPLEX;   /* a new owner is built first and its pointer pushed */
     if (p->ty == TY_SLICE)
         return A_SLICE;
     if (p->ty == TY_REF)
@@ -451,6 +456,12 @@ static void gen_expr(Expr *e)
         break;
     case E_BIN: gen_bin(e); break;
     case E_CALL: gen_call(e); break;
+    case E_STRUCTLIT:                  /* a new heap block, filled in place; pointer in rax */
+        gen_alloc(e->sdef->size, e->reg);
+        gen_struct_init(ST_HEAP, e->reg, 1, e->sdef, e, 0);
+        qword_slot(slot, sizeof slot, e->reg);
+        emit("mov rax, %s", slot);
+        break;
     default: break; /* literals and borrows are handled by their context */
     }
 }

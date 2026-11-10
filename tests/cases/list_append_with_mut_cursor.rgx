@@ -1,0 +1,47 @@
+// expect-exit: 4
+struct Node {
+    value: i32,
+    heap next: Node,
+}
+
+fn push(heap list: Node, reg v: i32) -> heap Node {
+    heap n: Node = Node { value: v, next: list }
+    return(n)
+}
+
+fn sum(stack head: &Node) -> reg i32 {
+    stack cur: &Node = head
+    reg total: i32 = cur.value
+    while (cur.next != null) {
+        cur = &cur.next
+        total = total + cur.value
+    }
+    return(total)
+}
+
+fn length(stack head: &Node) -> reg i32 {
+    stack cur: &Node = head
+    reg n: i32 = 1
+    while (cur.next != null) {
+        cur = &cur.next
+        n = n + 1
+    }
+    return(n)
+}
+
+fn append(stack head: &mut Node, reg v: i32) -> void {
+    stack cur: &mut Node = head
+    while (cur.next != null) {
+        cur = &mut cur.next
+    }
+    heap n: Node = Node { value: v, next: null }
+    cur.next = n
+}
+
+fn main() -> reg i32 {
+    heap list: Node = Node { value: 1, next: null }
+    append(&mut list, 2)
+    append(&mut list, 3)
+    append(&mut list, 4)
+    return(length(&list))
+}

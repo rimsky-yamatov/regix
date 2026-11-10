@@ -17,7 +17,7 @@ typedef enum { E_INT, E_VAR, E_NEG, E_BIN, E_CALL, E_FIELD, E_STRUCTLIT,
     E_NULL, E_ISNULL
 } ExprKind;
 enum { CP_NONE, CP_COPY, CP_MOVE };
-enum { PK_NONE, PK_NULL, PK_MOVE, PK_CALL, PK_TAKE };
+enum { PK_NONE, PK_NULL, PK_MOVE, PK_CALL, PK_TAKE, PK_LIT };
 
 typedef enum { OP_ADD, OP_SUB, OP_MUL, OP_LT, OP_GT, OP_LE, OP_GE, OP_EQ, OP_NE } BinOp;
 typedef enum {

@@ -1,0 +1,32 @@
+// expect-exit: 15
+struct Tree {
+    value: i32,
+    heap left: Tree,
+    heap right: Tree,
+}
+
+fn leaf(reg v: i32) -> heap Tree {
+    heap t: Tree = Tree { value: v, left: null, right: null }
+    return(t)
+}
+
+fn node(reg v: i32, heap l: Tree, heap r: Tree) -> heap Tree {
+    heap t: Tree = Tree { value: v, left: l, right: r }
+    return(t)
+}
+
+fn total(stack t: &Tree) -> reg i32 {
+    reg s: i32 = t.value
+    if (t.left != null) {
+        s = s + total(&t.left)
+    }
+    if (t.right != null) {
+        s = s + total(&t.right)
+    }
+    return(s)
+}
+
+fn main() -> reg i32 {
+    heap tree: Tree = node(5, node(2, leaf(1), leaf(3)), leaf(4))
+    return(total(&tree))
+}
