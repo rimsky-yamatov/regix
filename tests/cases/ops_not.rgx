@@ -1,0 +1,9 @@
+// expect-exit: 5
+fn main() -> reg i32 {
+    reg r: i32 = 0
+    if (!0) { r = r + 1 }
+    if (!5) { r = r + 100 }
+    if (!(1 == 2)) { r = r + 2 }
+    if (!!7) { r = r + 2 }
+    return(r)
+}
