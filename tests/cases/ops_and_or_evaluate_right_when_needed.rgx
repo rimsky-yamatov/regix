@@ -1,0 +1,12 @@
+// expect-exit: 2
+fn bump(stack n: &mut i32) -> reg i32 {
+    *n = *n + 1
+    return(1)
+}
+
+fn main() -> reg i32 {
+    stack n: i32 = 0
+    reg a: i32 = 1 && bump(&mut n)
+    reg b: i32 = 0 || bump(&mut n)
+    return(n)
+}
