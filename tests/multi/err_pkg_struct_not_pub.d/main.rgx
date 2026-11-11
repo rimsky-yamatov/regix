@@ -1,0 +1,7 @@
+// expect-error: struct 'Point' is not public in package 'geo'
+import geo;
+
+fn main() -> reg i32 {
+    stack p: geo::Point = geo::Point { x: 1 }
+    return(0)
+}
