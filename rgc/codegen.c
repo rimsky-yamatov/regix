@@ -372,6 +372,28 @@ static void gen_bin(Expr *e)
         else
             emit("imul eax, %s", rhs);
         break;
+    case OP_DIV:
+    case OP_MOD: {
+        int l_neg = label_seq++, l_end = label_seq++;
+        if (strcmp(rhs, "r10d") != 0)
+            emit("mov r10d, %s", rhs);
+        emit("test r10d, r10d");
+        emit("jz rgx_rt_panic");            /* division by zero: exit code 101 */
+        emit("cmp r10d, -1");               /* avoid the INT_MIN / -1 trap */
+        emit_jump("je", l_neg);
+        emit("cdq");
+        emit("idiv r10d");
+        if (e->op == OP_MOD)
+            emit("mov eax, edx");
+        emit_jump("jmp", l_end);
+        label_def(l_neg);
+        if (e->op == OP_DIV)
+            emit("neg eax");
+        else
+            emit("xor eax, eax");
+        label_def(l_end);
+        break;
+    }
     default: {
         const char *set = "sete";
         switch (e->op) {
@@ -453,6 +475,42 @@ static void gen_expr(Expr *e)
     case E_NEG:
         gen_expr(e->l);
         emit("neg eax");
+        break;
+    case E_AND: {
+        int l_false = label_seq++, l_end = label_seq++;
+        gen_expr(e->l);
+        emit("test eax, eax");
+        emit_jump("jz", l_false);
+        gen_expr(e->r);
+        emit("test eax, eax");
+        emit_jump("jz", l_false);
+        emit("mov eax, 1");
+        emit_jump("jmp", l_end);
+        label_def(l_false);
+        emit("xor eax, eax");
+        label_def(l_end);
+        break;
+    }
+    case E_OR: {
+        int l_true = label_seq++, l_end = label_seq++;
+        gen_expr(e->l);
+        emit("test eax, eax");
+        emit_jump("jnz", l_true);
+        gen_expr(e->r);
+        emit("test eax, eax");
+        emit_jump("jnz", l_true);
+        emit("xor eax, eax");
+        emit_jump("jmp", l_end);
+        label_def(l_true);
+        emit("mov eax, 1");
+        label_def(l_end);
+        break;
+    }
+    case E_NOT:
+        gen_expr(e->l);
+        emit("test eax, eax");
+        emit("sete al");
+        emit("movzx eax, al");
         break;
     case E_BIN: gen_bin(e); break;
     case E_CALL: gen_call(e); break;

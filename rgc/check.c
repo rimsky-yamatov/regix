@@ -535,10 +535,13 @@ static void collect_uses(Expr *e, Use **u, int *n, int *cap)
     case E_FIELD:
     case E_LEN:
     case E_NEG:
+    case E_NOT:
     case E_DEREF:
         collect_uses(e->l, u, n, cap);
         break;
     case E_BIN:
+    case E_AND:
+    case E_OR:
     case E_INDEX:
         collect_uses(e->l, u, n, cap);
         collect_uses(e->r, u, n, cap);
@@ -1071,8 +1074,21 @@ static Ty check_expr(Ctx *c, Expr *e, int allow_void)
         }
         check_expr(c, e->l, 0);
         check_expr(c, e->r, 0);
+        if (e->op == OP_DIV || e->op == OP_MOD) {
+            c->prog->uses_panic = 1;
+            if (e->r->kind == E_INT && e->r->val == 0)
+                err(c, e->r->line, e->r->col, "division by zero");
+        }
         return TY_I32;
     }
+    case E_AND:
+    case E_OR:
+        check_expr(c, e->l, 0);
+        check_expr(c, e->r, 0);
+        return TY_I32;
+    case E_NOT:
+        check_expr(c, e->l, 0);
+        return TY_I32;
     case E_NULL:
         err(c, e->line, e->col,
             "null can only be assigned to, passed as, or compared with a 'heap' struct value");
