@@ -1,0 +1,12 @@
+// expect-exit: 1
+// INT_MIN / -1 wraps instead of trapping.
+fn main() -> reg i32 {
+    reg a: i32 = 0 - 2147483647 - 1
+    reg b: i32 = 0 - 1
+    reg c: i32 = a / b
+    reg m: i32 = a % b
+    if (c == a && m == 0) {
+        return(1)
+    }
+    return(0)
+}
