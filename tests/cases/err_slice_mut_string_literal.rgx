@@ -1,0 +1,8 @@
+// expect-error: a string literal is read-only
+fn f(stack b: &mut [u8]) -> void {
+}
+
+fn main() -> reg i32 {
+    f("abc")
+    return(0)
+}
