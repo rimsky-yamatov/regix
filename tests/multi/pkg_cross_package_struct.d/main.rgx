@@ -1,0 +1,7 @@
+// expect-exit: 25
+import geo;
+
+fn main() -> reg i32 {
+    stack p: geo::Point = geo::Point { x: 3, y: 4 }
+    return(geo::dist2(&p))
+}

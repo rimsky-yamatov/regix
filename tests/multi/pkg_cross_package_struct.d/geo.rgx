@@ -1,0 +1,10 @@
+package geo;
+
+pub struct Point {
+    x: i32,
+    y: i32,
+}
+
+pub fn dist2(stack p: &Point) -> reg i32 {
+    return(p.x * p.x + p.y * p.y)
+}
