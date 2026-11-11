@@ -1,0 +1,14 @@
+// expect-exit: 12
+fn double_all(stack v: &mut [i32]) -> void {
+    reg i: i32 = 0
+    while (i < v.len) {
+        v[i] = v[i] * 2
+        i = i + 1
+    }
+}
+
+fn main() -> reg i32 {
+    stack a: [i32; 3] = [1, 2, 3]
+    double_all(&mut a)
+    return(a[0] + a[1] + a[2])
+}
