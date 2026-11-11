@@ -1,0 +1,4 @@
+// expect-exit: 23
+fn main() -> reg i32 {
+    return(17 / 5 + 17 % 5 * 10)
+}
