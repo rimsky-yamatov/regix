@@ -1,0 +1,9 @@
+// expect-exit: 15
+// Division truncates toward zero; the remainder takes the sign of the dividend:
+// -17 / 5 = -3 and -17 % 5 = -2.
+fn main() -> reg i32 {
+    reg a: i32 = 0 - 17
+    reg q: i32 = a / 5
+    reg r: i32 = a % 5
+    return(q + r + 20)
+}
