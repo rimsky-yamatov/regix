@@ -1,0 +1,14 @@
+// expect-exit: 8
+fn read(stack v: &[i32]) -> reg i32 {
+    return(v[0])
+}
+
+fn bump(stack v: &mut [i32]) -> reg i32 {
+    v[0] = v[0] + 1
+    return(read(v))
+}
+
+fn main() -> reg i32 {
+    stack a: [i32; 1] = [7]
+    return(bump(&mut a))
+}
