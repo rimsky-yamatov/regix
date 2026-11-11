@@ -1,0 +1,4 @@
+// expect-error: division by zero
+fn main() -> reg i32 {
+    return(5 / 0)
+}
