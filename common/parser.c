@@ -280,6 +280,11 @@ static Expr *parse_primary(Parser *p)
 static Expr *parse_unary(Parser *p)
 {
     Token *t = cur(p);
+    if (accept(p, T_BANG)) {
+        Expr *e = mk_expr(E_NOT, t);
+        e->l = parse_unary(p);
+        return e;
+    }
     if (accept(p, T_STAR)) {
         Expr *e = mk_expr(E_DEREF, t);
         e->l = parse_unary(p);
@@ -306,9 +311,11 @@ static Expr *parse_mul(Parser *p)
 {
     Expr *l = parse_unary(p);
     /* A `*` that starts a new line begins a statement (`*r = v`), not a product. */
-    while (at(p, T_STAR) && cur(p)->line == p->t[p->pos - 1].line) {
+    while ((at(p, T_STAR) && cur(p)->line == p->t[p->pos - 1].line) || at(p, T_SLASH) ||
+           at(p, T_PERCENT)) {
         Token *t = advance(p);
-        l = mk_bin(OP_MUL, t, l, parse_unary(p));
+        BinOp op = t->kind == T_STAR ? OP_MUL : (t->kind == T_SLASH ? OP_DIV : OP_MOD);
+        l = mk_bin(op, t, l, parse_unary(p));
     }
     return l;
 }
@@ -323,7 +330,7 @@ static Expr *parse_add(Parser *p)
     return l;
 }
 
-static Expr *parse_expr(Parser *p)
+static Expr *parse_cmp(Parser *p)
 {
     Expr *l = parse_add(p);
     for (;;) {
@@ -340,6 +347,32 @@ static Expr *parse_expr(Parser *p)
         Token *t = advance(p);
         l = mk_bin(op, t, l, parse_add(p));
     }
+}
+
+static Expr *parse_and(Parser *p)
+{
+    Expr *l = parse_cmp(p);
+    while (at(p, T_ANDAND)) {
+        Token *t = advance(p);
+        Expr *e = mk_expr(E_AND, t);
+        e->l = l;
+        e->r = parse_cmp(p);
+        l = e;
+    }
+    return l;
+}
+
+static Expr *parse_expr(Parser *p)
+{
+    Expr *l = parse_and(p);
+    while (at(p, T_OROR)) {
+        Token *t = advance(p);
+        Expr *e = mk_expr(E_OR, t);
+        e->l = l;
+        e->r = parse_and(p);
+        l = e;
+    }
+    return l;
 }
 
 /* ---- statements ---- */
