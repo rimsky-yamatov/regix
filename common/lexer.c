@@ -54,6 +54,11 @@ const char *tok_name(TokKind k)
     case T_PLUS: return "'+'";
     case T_MINUS: return "'-'";
     case T_STAR: return "'*'";
+    case T_SLASH: return "'/'";
+    case T_PERCENT: return "'%'";
+    case T_BANG: return "'!'";
+    case T_ANDAND: return "'&&'";
+    case T_OROR: return "'||'";
     case T_LT: return "'<'";
     case T_GT: return "'>'";
     case T_LE: return "'<='";
@@ -197,8 +202,19 @@ Token *lex(const char *file, const char *src, size_t *count)
             case '.': tk.kind = T_DOT; break;
             case '[': tk.kind = T_LBRACKET; break;
             case ']': tk.kind = T_RBRACKET; break;
-            case '&': tk.kind = T_AMP; break;
+            case '&':
+                if (d == '&') { tk.kind = T_ANDAND; tk.len = 2; }
+                else tk.kind = T_AMP;
+                break;
             case '+': tk.kind = T_PLUS; break;
+            case '/': tk.kind = T_SLASH; break;
+            case '%': tk.kind = T_PERCENT; break;
+            case '|':
+                if (d != '|')
+                    rgx_die(file, line, col, "unexpected character '|' (did you mean '||'?)");
+                tk.kind = T_OROR;
+                tk.len = 2;
+                break;
             case '*': tk.kind = T_STAR; break;
             case ':':
                 if (d == ':') { tk.kind = T_COLONCOLON; tk.len = 2; }
@@ -221,8 +237,9 @@ Token *lex(const char *file, const char *src, size_t *count)
                 else tk.kind = T_GT;
                 break;
             case '!':
-                if (d == '=') { tk.kind = T_NE; tk.len = 2; break; }
-                /* fall through */
+                if (d == '=') { tk.kind = T_NE; tk.len = 2; }
+                else tk.kind = T_BANG;
+                break;
             default:
                 rgx_die(file, line, col, "unexpected character '%c'", c);
             }

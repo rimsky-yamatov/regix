@@ -14,12 +14,12 @@ typedef struct {
 typedef enum { ST_NONE, ST_REG, ST_STACK, ST_HEAP } Storage;
 typedef enum { E_INT, E_VAR, E_NEG, E_BIN, E_CALL, E_FIELD, E_STRUCTLIT,
     E_STR, E_ARRAYLIT, E_ARRAYREP, E_INDEX, E_ADDR, E_LEN, E_DEREF,
-    E_NULL, E_ISNULL
+    E_NULL, E_ISNULL, E_AND, E_OR, E_NOT
 } ExprKind;
 enum { CP_NONE, CP_COPY, CP_MOVE };
 enum { PK_NONE, PK_NULL, PK_MOVE, PK_CALL, PK_TAKE, PK_LIT };
 
-typedef enum { OP_ADD, OP_SUB, OP_MUL, OP_LT, OP_GT, OP_LE, OP_GE, OP_EQ, OP_NE } BinOp;
+typedef enum { OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD, OP_LT, OP_GT, OP_LE, OP_GE, OP_EQ, OP_NE } BinOp;
 typedef enum {
     S_DECL, S_ASSIGN, S_FASSIGN, S_IASSIGN, S_DASSIGN, S_IF, S_WHILE, S_RETURN, S_EXPR, S_BLOCK, S_DROP
 } StmtKind;
