@@ -1,0 +1,5 @@
+// expect-error: package 'geo' is not imported
+fn main() -> reg i32 {
+    stack p: geo::Point = geo::Point { x: 1 }
+    return(0)
+}
