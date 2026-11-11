@@ -35,6 +35,7 @@ typedef struct {
     int n, cap;
     int nreg, maxreg, nslot, maxslot;
     int heap_ok;  /* next call may yield an owned heap value */
+    int pline, pcol;  /* position of the statement being checked, for errors without a node */
 } Ctx;
 
 #define HEAP_MAX_BYTES 4096
@@ -84,14 +85,37 @@ static int same_pkg(const char *a, const char *b)
     return strcmp(a, b) == 0;
 }
 
-/* Structs are visible inside their own package only. */
+static int imported(Program *unit, const char *module);
+
+/* A struct is found by its plain name inside its own package, or by its full
+ * name (a::b::Name) from another package that imports it (the struct must be
+ * pub). */
 static StructDef *find_struct(Ctx *c, const char *name)
 {
     Program *p = c->prog;
-    for (int i = 0; i < p->nstructs; i++)
-        if (strcmp(p->structs[i]->name, name) == 0 &&
-            same_pkg(p->structs[i]->unit->package, c->unit->package))
-            return p->structs[i];
+    int qualified = strstr(name, "::") != NULL;
+    for (int i = 0; i < p->nstructs; i++) {
+        StructDef *sd = p->structs[i];
+        const char *pkg = sd->unit->package;
+        if (!qualified) {
+            if (strcmp(sd->name, name) == 0 && same_pkg(pkg, c->unit->package))
+                return sd;
+            continue;
+        }
+        if (!pkg || strlen(pkg) + 2 + strlen(sd->name) != strlen(name) ||
+            strncmp(name, pkg, strlen(pkg)) != 0 || strncmp(name + strlen(pkg), "::", 2) != 0 ||
+            strcmp(name + strlen(pkg) + 2, sd->name) != 0)
+            continue;
+        if (!same_pkg(pkg, c->unit->package)) {
+            if (!imported(c->unit, pkg))
+                err(c, c->pline, c->pcol, "package '%s' is not imported (add 'import %s;')",
+                    pkg, pkg);
+            else if (!sd->is_pub)
+                err(c, c->pline, c->pcol, "struct '%s' is not public in package '%s'",
+                    sd->name, pkg);
+        }
+        return sd;
+    }
     return NULL;
 }
 
@@ -446,6 +470,8 @@ static void check_slice_arg(Ctx *c, Expr *call, Expr *a, Param *p)
     if (a->kind == E_STR) {
         if (p->arr.elem != TY_U8)
             err(c, a->line, a->col, "a string literal is a [u8] slice");
+        if (p->arr.rmut)
+            err(c, a->line, a->col, "a string literal is read-only and cannot be passed as &mut [u8]");
         a->val = add_string(c->prog, a->sval, a->slen);
         return;
     }
@@ -455,6 +481,7 @@ static void check_slice_arg(Ctx *c, Expr *call, Expr *a, Param *p)
         *v = *a;
         a->kind = E_ADDR;
         a->l = v;
+        a->val = p->arr.rmut;
     }
     if (a->kind == E_ADDR) {
         Local *l = seq_local(c, a->l, "a borrowed value");
@@ -468,6 +495,17 @@ static void check_slice_arg(Ctx *c, Expr *call, Expr *a, Param *p)
             err(c, a->line, a->col, "a secret cannot be borrowed");
             return;
         }
+        if (p->arr.rmut && !a->val) {
+            err(c, a->line, a->col, "'%s' needs a mutable borrow: write &mut", p->name);
+            return;
+        }
+        if (a->val && l->ty == TY_SLICE && !l->arr.rmut) {
+            err(c, a->line, a->col, "the slice '%s' is read-only and cannot be borrowed mutably",
+                l->name);
+            return;
+        }
+        if (a->val && l->ty == TY_ARRAY && !touch(c, l, U_WRITE, a->line, a->col))
+            return;
         bind_seq(a, l);
         if (l->ty == TY_ARRAY)
             call->notail = 1; /* the array dies with this frame: no tail jump */
@@ -821,7 +859,9 @@ static int check_heap_value(Ctx *c, Expr *x, StructDef *target)
 
 static void check_lit(Ctx *c, Expr *lit, StructDef *sd)
 {
-    if (strcmp(lit->name, sd->name) != 0)
+    c->pline = lit->line;
+    c->pcol = lit->col;
+    if (find_struct(c, lit->name) != sd)
         err(c, lit->line, lit->col, "expected a '%s' value but found a '%s' literal",
             sd->name, lit->name);
     lit->sdef = sd;
@@ -1456,6 +1496,8 @@ static void check_return(Ctx *c, Stmt *s)
 
 static void check_stmt(Ctx *c, Stmt *s)
 {
+    c->pline = s->line;
+    c->pcol = s->col;
     switch (s->kind) {
     case S_DECL:
         check_decl(c, s);
@@ -1567,8 +1609,8 @@ static void check_stmt(Ctx *c, Stmt *s)
         break;
     }
     case S_IASSIGN:
-        if (check_index(c, s->lhs, 0) && s->lhs->vty == TY_SLICE)
-            err(c, s->line, s->col, "slices are read-only; assign through the array itself");
+        if (check_index(c, s->lhs, 0) && s->lhs->vty == TY_SLICE && !s->lhs->ai.rmut)
+            err(c, s->line, s->col, "slices are read-only; use a &mut [T] parameter to write");
         check_expr(c, s->expr, 0);
         {
             Local *bl = s->lhs->l->kind == E_VAR ? lookup(c, s->lhs->l->name) : NULL;
@@ -1679,6 +1721,8 @@ static void check_block(Ctx *c, Block *b)
 
 static void check_func(Ctx *c, Func *f)
 {
+    c->pline = f->line;
+    c->pcol = f->col;
     c->fn = f;
     c->unit = f->unit;
     c->file = f->unit->file;

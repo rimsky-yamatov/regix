@@ -71,6 +71,17 @@ static Storage accept_storage(Parser *p)
     }
 }
 
+/* A struct type name, possibly qualified (a::b::Name); `first` is already read. */
+static char *qualified_type_name(Parser *p, Token *first)
+{
+    char *s = ident_text(first);
+    while (at(p, T_COLONCOLON) && peek1(p)->kind == T_IDENT) {
+        advance(p);
+        s = xsprintf("%s::%s", s, ident_text(advance(p)));
+    }
+    return s;
+}
+
 /* Element type of an array or slice: i32 or u8. */
 static Ty parse_elem(Parser *p)
 {
@@ -103,20 +114,21 @@ static Ty parse_type(Parser *p, int allow_void, char **sname, ArrInfo *ai)
             return TY_ARRAY;
         }
         advance(p);
+        int is_mut = 0;
+        Token *mt = cur(p);
+        if (mt->kind == T_IDENT && mt->len == 3 && memcmp(mt->text, "mut", 3) == 0 &&
+            (peek1(p)->kind == T_IDENT || peek1(p)->kind == T_LBRACKET)) {
+            advance(p);
+            is_mut = 1;
+        }
         if (!at(p, T_LBRACKET)) {
             /* reference: &T or &mut T */
-            int is_mut = 0;
-            Token *mt = cur(p);
-            if (mt->kind == T_IDENT && mt->len == 3 && memcmp(mt->text, "mut", 3) == 0) {
-                advance(p);
-                is_mut = 1;
-            }
             Token *tt = expect(p, T_IDENT, "type");
             if (tt->len == 3 && memcmp(tt->text, "i32", 3) == 0) {
                 ai->elem = TY_I32;
             } else {
                 ai->elem = TY_STRUCT;
-                *sname = ident_text(tt);
+                *sname = qualified_type_name(p, tt);
             }
             ai->rmut = is_mut;
             return TY_REF;
@@ -130,6 +142,7 @@ static Ty parse_type(Parser *p, int allow_void, char **sname, ArrInfo *ai)
         } else {
             ai->elem = parse_elem(p);
         }
+        ai->rmut = is_mut;
         expect(p, T_RBRACKET, "']'");
         return TY_SLICE;
     }
@@ -138,7 +151,7 @@ static Ty parse_type(Parser *p, int allow_void, char **sname, ArrInfo *ai)
         return TY_I32;
     if (allow_void && t->len == 4 && memcmp(t->text, "void", 4) == 0)
         return TY_VOID;
-    *sname = ident_text(t);
+    *sname = qualified_type_name(p, t);
     return TY_STRUCT;
 }
 
