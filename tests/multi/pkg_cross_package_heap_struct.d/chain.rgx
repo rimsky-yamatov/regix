@@ -1,0 +1,21 @@
+package chain;
+
+pub struct Node {
+    value: i32,
+    heap next: Node,
+}
+
+pub fn push(heap list: Node, reg v: i32) -> heap Node {
+    heap n: Node = Node { value: v, next: list }
+    return(n)
+}
+
+pub fn sum(stack head: &Node) -> reg i32 {
+    stack cur: &Node = head
+    reg total: i32 = cur.value
+    while (cur.next != null) {
+        cur = &cur.next
+        total = total + cur.value
+    }
+    return(total)
+}

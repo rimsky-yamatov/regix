@@ -1,0 +1,9 @@
+// expect-exit: 6
+import chain;
+
+fn main() -> reg i32 {
+    heap l: chain::Node = chain::Node { value: 1, next: null }
+    l = chain::push(l, 2)
+    l = chain::push(l, 3)
+    return(chain::sum(&l))
+}
