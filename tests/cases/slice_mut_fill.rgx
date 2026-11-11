@@ -1,0 +1,20 @@
+// expect-exit: 30
+fn fill(stack buf: &mut [u8], reg v: i32) -> void {
+    reg i: i32 = 0
+    while (i < buf.len) {
+        buf[i] = v
+        i = i + 1
+    }
+}
+
+fn main() -> reg i32 {
+    stack a: [u8; 5] = [0; 5]
+    fill(&mut a, 6)
+    reg i: i32 = 0
+    reg sum: i32 = 0
+    while (i < a.len) {
+        sum = sum + a[i]
+        i = i + 1
+    }
+    return(sum)
+}
