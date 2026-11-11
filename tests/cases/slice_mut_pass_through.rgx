@@ -1,0 +1,14 @@
+// expect-exit: 7
+fn inner(stack v: &mut [i32]) -> void {
+    v[1] = 7
+}
+
+fn outer(stack v: &mut [i32]) -> void {
+    inner(v)
+}
+
+fn main() -> reg i32 {
+    stack a: [i32; 2] = [0, 0]
+    outer(&mut a)
+    return(a[1])
+}
