@@ -1,0 +1,10 @@
+// expect-exit: 4
+fn put(stack b: &mut [u8]) -> void {
+    b[0] = 260
+}
+
+fn main() -> reg i32 {
+    stack a: [u8; 1] = [0]
+    put(&mut a)
+    return(a[0])
+}
