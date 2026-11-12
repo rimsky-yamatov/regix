@@ -1,0 +1,130 @@
+// std::list: a singly linked list of i32.
+//
+//     import std::list;
+//     heap l: std::list::Node = std::list::empty()    // the empty list is null
+//     l = std::list::push(l, 3)
+//     if (l != null) { std::list::length(&l) }        // borrowing needs a non-null list
+//
+// Functions that borrow the list (&Node) cannot be given an empty (null) list;
+// test with `l != null` first. Indexes must satisfy 0 <= i < length, anything
+// else stops the program (exit code 101).
+package std::list;
+
+pub struct Node {
+    value: i32,
+    heap next: Node,
+}
+
+pub fn empty() -> heap Node {
+    return(null)
+}
+
+// Adds v at the front and returns the new list.
+pub fn push(heap list: Node, reg v: i32) -> heap Node {
+    heap n: Node = Node { value: v, next: list }
+    return(n)
+}
+
+// Removes the first element (if any) and returns the rest.
+pub fn pop(heap list: Node) -> heap Node {
+    if (list == null) {
+        return(null)
+    }
+    heap rest: Node = take(list.next)
+    return(rest)
+}
+
+pub fn length(stack head: &Node) -> reg i32 {
+    stack cur: &Node = head
+    reg n: i32 = 1
+    while (cur.next != null) {
+        cur = &cur.next
+        n = n + 1
+    }
+    return(n)
+}
+
+pub fn sum(stack head: &Node) -> reg i32 {
+    stack cur: &Node = head
+    reg total: i32 = cur.value
+    while (cur.next != null) {
+        cur = &cur.next
+        total = total + cur.value
+    }
+    return(total)
+}
+
+pub fn get(stack head: &Node, reg i: i32) -> reg i32 {
+    stack cur: &Node = head
+    reg k: i32 = 0
+    while (k != i) {
+        cur = &cur.next
+        k = k + 1
+    }
+    return(cur.value)
+}
+
+pub fn set(stack head: &mut Node, reg i: i32, reg v: i32) -> void {
+    stack cur: &mut Node = head
+    reg k: i32 = 0
+    while (k != i) {
+        cur = &mut cur.next
+        k = k + 1
+    }
+    cur.value = v
+}
+
+// 1 if some element equals v, else 0.
+pub fn contains(stack head: &Node, reg v: i32) -> reg i32 {
+    stack cur: &Node = head
+    if (cur.value == v) {
+        return(1)
+    }
+    while (cur.next != null) {
+        cur = &cur.next
+        if (cur.value == v) {
+            return(1)
+        }
+    }
+    return(0)
+}
+
+// Position of the first element equal to v, or -1.
+pub fn index_of(stack head: &Node, reg v: i32) -> reg i32 {
+    stack cur: &Node = head
+    reg i: i32 = 0
+    if (cur.value == v) {
+        return(0)
+    }
+    while (cur.next != null) {
+        cur = &cur.next
+        i = i + 1
+        if (cur.value == v) {
+            return(i)
+        }
+    }
+    return(0 - 1)
+}
+
+// Adds v at the end.
+pub fn append(stack head: &mut Node, reg v: i32) -> void {
+    stack cur: &mut Node = head
+    while (cur.next != null) {
+        cur = &mut cur.next
+    }
+    heap n: Node = Node { value: v, next: null }
+    cur.next = n
+}
+
+// Reverses the list; an empty list stays empty.
+pub fn reverse(heap list: Node) -> heap Node {
+    heap prev: Node = null
+    heap cur: Node = list
+    while (cur != null) {
+        heap next: Node = take(cur.next)
+        cur.next = prev
+        prev = cur
+        cur = next
+    }
+    return(prev)
+}

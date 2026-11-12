@@ -2,6 +2,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
 #include "abi.h"
 #include "check.h"
 #include "codegen.h"
@@ -75,6 +81,41 @@ static char *stem_of(const char *path)
     return xstrndup(base, n);
 }
 
+/* Directory holding the Regix sources of the standard library: $RGX_STD, or
+ * `std` next to (or one level above) the compiler executable. */
+static char *find_std_dir(const char *argv0)
+{
+    const char *env = getenv("RGX_STD");
+    if (env && *env)
+        return xstrdup(env);
+    char buf[1024];
+    size_t n = 0;
+#ifdef _WIN32
+    n = (size_t)GetModuleFileNameA(NULL, buf, sizeof buf - 1);
+#else
+    ssize_t r = readlink("/proc/self/exe", buf, sizeof buf - 1);
+    n = r > 0 ? (size_t)r : 0;
+#endif
+    if (n == 0) {
+        n = strlen(argv0) < sizeof buf - 1 ? strlen(argv0) : sizeof buf - 1;
+        memcpy(buf, argv0, n);
+    }
+    buf[n] = '\0';
+    size_t cut = n;
+    while (cut > 0 && buf[cut - 1] != '/' && buf[cut - 1] != '\\')
+        cut--;
+    char *dir = cut ? xstrndup(buf, cut - 1) : xstrdup(".");
+    const char *rel[] = {"/std", "/../std"};
+    for (int i = 0; i < 2; i++) {
+        char *cand = xsprintf("%s%s", dir, rel[i]);
+        char *probe = xsprintf("%s/math.rgx", cand);
+        char *t = read_file(probe, NULL);
+        if (t)
+            return cand;
+    }
+    return NULL;
+}
+
 static int ends_with(const char *s, const char *suffix)
 {
     size_t a = strlen(s), b = strlen(suffix);
@@ -129,17 +170,60 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    Program **files = xmalloc(sizeof(Program *) * (size_t)ninputs);
+    Program **files = NULL;
+    int nfiles = 0, fcap = 0;
     for (int i = 0; i < ninputs; i++) {
         char *src = read_file(inputs[i], NULL);
         if (!src) {
             fprintf(stderr, "rgc: cannot read '%s'\n", inputs[i]);
             return 1;
         }
-        files[i] = parse_program(inputs[i], src);
+        Program *u = parse_program(inputs[i], src);
+        VEC_PUSH(files, nfiles, fcap, u);
+    }
+    /* load the std::* modules that the program (and those modules) import */
+    char *std_dir = NULL;
+    for (int i = 0; i < nfiles; i++) {
+        for (int k = 0; k < files[i]->nimports; k++) {
+            const char *im = files[i]->imports[k];
+            if (strncmp(im, "std::", 5) != 0 || is_builtin_module(im))
+                continue;
+            int loaded = 0;
+            for (int j = 0; j < nfiles && !loaded; j++)
+                loaded = files[j]->package && strcmp(files[j]->package, im) == 0;
+            if (loaded)
+                continue;
+            if (!std_dir) {
+                std_dir = find_std_dir(argv[0]);
+                if (!std_dir) {
+                    fprintf(stderr, "rgc: cannot find the standard library directory "
+                                    "(set RGX_STD to the `std` folder)\n");
+                    return 1;
+                }
+            }
+            char *rel = xstrdup(im + 5);
+            for (char *q = rel; *q; q++)
+                if (*q == ':')
+                    *q = '/';
+            char *rel2 = xmalloc(strlen(rel) + 1);
+            size_t o = 0;
+            for (size_t q = 0; rel[q]; q++)
+                if (!(rel[q] == '/' && rel[q + 1] == '/'))
+                    rel2[o++] = rel[q];
+            rel2[o] = '\0';
+            char *path = xsprintf("%s/%s.rgx", std_dir, rel2);
+            char *src = read_file(path, NULL);
+            if (!src) {
+                fprintf(stderr, "%s:%d:%d: error: standard library module '%s' not found in %s\n",
+                        files[i]->file, 1, 1, im, std_dir);
+                return 1;
+            }
+            Program *u = parse_program(path, src);
+            VEC_PUSH(files, nfiles, fcap, u);
+        }
     }
     const char *input = inputs[0];
-    Program *prog = link_units(files, ninputs);
+    Program *prog = link_units(files, nfiles);
     if (check_program(prog, abi, 1) > 0)
         return 1;
 

@@ -12,4 +12,8 @@ Program *link_units(Program **files, int n);
  * Exactly one `main` must exist across all files. */
 int check_program(Program *prog, const Abi *abi, int require_main);
 
+/* True for modules implemented by the runtime (std::io, std::process); other
+ * std::* modules are Regix source files loaded from the std directory. */
+int is_builtin_module(const char *name);
+
 #endif

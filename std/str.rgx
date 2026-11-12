@@ -1,0 +1,203 @@
+// std::str: byte strings. A string is a [u8] slice (&[u8]) and is not
+// NUL-terminated; the functions that write take a &mut [u8] buffer.
+package std::str;
+
+pub fn len(stack s: &[u8]) -> reg i32 {
+    return(s.len)
+}
+
+// 1 if both have the same bytes, else 0.
+pub fn eq(stack a: &[u8], stack b: &[u8]) -> reg i32 {
+    if (a.len != b.len) {
+        return(0)
+    }
+    reg i: i32 = 0
+    while (i < a.len) {
+        if (a[i] != b[i]) {
+            return(0)
+        }
+        i = i + 1
+    }
+    return(1)
+}
+
+pub fn starts_with(stack s: &[u8], stack prefix: &[u8]) -> reg i32 {
+    if (prefix.len > s.len) {
+        return(0)
+    }
+    reg i: i32 = 0
+    while (i < prefix.len) {
+        if (s[i] != prefix[i]) {
+            return(0)
+        }
+        i = i + 1
+    }
+    return(1)
+}
+
+pub fn ends_with(stack s: &[u8], stack suffix: &[u8]) -> reg i32 {
+    if (suffix.len > s.len) {
+        return(0)
+    }
+    reg off: i32 = s.len - suffix.len
+    reg i: i32 = 0
+    while (i < suffix.len) {
+        if (s[off + i] != suffix[i]) {
+            return(0)
+        }
+        i = i + 1
+    }
+    return(1)
+}
+
+// Index of the first occurrence of needle in hay, or -1. An empty needle is
+// found at 0.
+pub fn find(stack hay: &[u8], stack needle: &[u8]) -> reg i32 {
+    if (needle.len == 0) {
+        return(0)
+    }
+    reg i: i32 = 0
+    reg last: i32 = hay.len - needle.len
+    while (i <= last) {
+        reg j: i32 = 0
+        while (j < needle.len && hay[i + j] == needle[j]) {
+            j = j + 1
+        }
+        if (j == needle.len) {
+            return(i)
+        }
+        i = i + 1
+    }
+    return(0 - 1)
+}
+
+pub fn contains(stack hay: &[u8], stack needle: &[u8]) -> reg i32 {
+    return(find(hay, needle) >= 0)
+}
+
+// Index of the first byte equal to c, or -1.
+pub fn find_byte(stack s: &[u8], reg c: i32) -> reg i32 {
+    reg i: i32 = 0
+    while (i < s.len) {
+        if (s[i] == c) {
+            return(i)
+        }
+        i = i + 1
+    }
+    return(0 - 1)
+}
+
+pub fn count_byte(stack s: &[u8], reg c: i32) -> reg i32 {
+    reg i: i32 = 0
+    reg n: i32 = 0
+    while (i < s.len) {
+        if (s[i] == c) {
+            n = n + 1
+        }
+        i = i + 1
+    }
+    return(n)
+}
+
+// Copies as many bytes as fit and returns how many were copied.
+pub fn copy_into(stack dst: &mut [u8], stack src: &[u8]) -> reg i32 {
+    reg n: i32 = src.len
+    if (dst.len < n) {
+        n = dst.len
+    }
+    reg i: i32 = 0
+    while (i < n) {
+        dst[i] = src[i]
+        i = i + 1
+    }
+    return(n)
+}
+
+pub fn fill(stack dst: &mut [u8], reg c: i32) -> void {
+    reg i: i32 = 0
+    while (i < dst.len) {
+        dst[i] = c
+        i = i + 1
+    }
+}
+
+// Reverses the bytes of the buffer in place.
+pub fn reverse(stack buf: &mut [u8]) -> void {
+    reg i: i32 = 0
+    reg j: i32 = buf.len - 1
+    while (i < j) {
+        reg t: i32 = buf[i]
+        buf[i] = buf[j]
+        buf[j] = t
+        i = i + 1
+        j = j - 1
+    }
+}
+
+// ---- single bytes (ASCII) ----
+
+pub fn is_digit(reg c: i32) -> reg i32 {
+    return(c >= 48 && c <= 57)
+}
+
+pub fn is_upper(reg c: i32) -> reg i32 {
+    return(c >= 65 && c <= 90)
+}
+
+pub fn is_lower(reg c: i32) -> reg i32 {
+    return(c >= 97 && c <= 122)
+}
+
+pub fn is_alpha(reg c: i32) -> reg i32 {
+    return(is_upper(c) || is_lower(c))
+}
+
+pub fn is_alnum(reg c: i32) -> reg i32 {
+    return(is_alpha(c) || is_digit(c))
+}
+
+// Space, tab, line feed or carriage return.
+pub fn is_space(reg c: i32) -> reg i32 {
+    return(c == 32 || c == 9 || c == 10 || c == 13)
+}
+
+pub fn to_upper(reg c: i32) -> reg i32 {
+    if (is_lower(c)) {
+        return(c - 32)
+    }
+    return(c)
+}
+
+pub fn to_lower(reg c: i32) -> reg i32 {
+    if (is_upper(c)) {
+        return(c + 32)
+    }
+    return(c)
+}
+
+// Copies src into dst converting ASCII letters; returns the number of bytes.
+pub fn to_upper_into(stack dst: &mut [u8], stack src: &[u8]) -> reg i32 {
+    reg n: i32 = src.len
+    if (dst.len < n) {
+        n = dst.len
+    }
+    reg i: i32 = 0
+    while (i < n) {
+        dst[i] = to_upper(src[i])
+        i = i + 1
+    }
+    return(n)
+}
+
+pub fn to_lower_into(stack dst: &mut [u8], stack src: &[u8]) -> reg i32 {
+    reg n: i32 = src.len
+    if (dst.len < n) {
+        n = dst.len
+    }
+    reg i: i32 = 0
+    while (i < n) {
+        dst[i] = to_lower(src[i])
+        i = i + 1
+    }
+    return(n)
+}

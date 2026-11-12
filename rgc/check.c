@@ -1235,7 +1235,8 @@ static void check_array_init(Ctx *c, Stmt *s)
 static int user_func_named(Ctx *c, const char *name)
 {
     for (int i = 0; i < c->prog->nfuncs; i++)
-        if (strcmp(c->prog->funcs[i]->name, name) == 0)
+        if (strcmp(c->prog->funcs[i]->name, name) == 0 &&
+            same_pkg(c->prog->funcs[i]->unit->package, c->unit->package))
             return 1;
     return 0;
 }
@@ -1938,4 +1939,9 @@ int check_program(Program *prog, const Abi *abi, int require_main)
         }
     }
     return rgx_nerrors - before;
+}
+
+int is_builtin_module(const char *name)
+{
+    return strcmp(name, "std::io") == 0 || strcmp(name, "std::process") == 0;
 }
