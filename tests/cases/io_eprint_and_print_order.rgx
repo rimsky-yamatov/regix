@@ -1,0 +1,8 @@
+// expect-exit: 0
+// expect-stdout: ab
+import std::io;
+
+fn main() -> void {
+    std::io::print("a")
+    std::io::eprint("b")
+}

@@ -1,0 +1,4 @@
+// expect-error: 'std::process' is not imported
+fn main() -> void {
+    std::process::exit(1)
+}

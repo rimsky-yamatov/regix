@@ -8,6 +8,7 @@
  *   // expect-error: TEXT   compilation must fail and print TEXT
  *   // expect-stdout: TEXT  (with expect-exit) program output must contain TEXT
  *   // args: A B            (with expect-exit) command-line arguments to run with
+ *   // stdin: TEXT         (with expect-exit) text fed to standard input (\n and \r escapes)
  *   // expect-gas: TEXT     `--target linux-x64 -S` output must contain TEXT
  *   // expect-masm: TEXT    `--target windows-x64 -S` output must contain TEXT
  *
@@ -154,6 +155,7 @@ static void run_case_impl(const char *rgc, const char *name, const char *path,
     char *masm_s = directive(src, "expect-masm");
     char *out_s = directive(src, "expect-stdout");
     char *args_s = directive(src, "args");
+    char *stdin_s = directive(src, "stdin");
     char *log = xsprintf("%s/%s.log", TMP, name);
 
     if (exit_s) {
@@ -164,7 +166,23 @@ static void run_case_impl(const char *rgc, const char *name, const char *path,
         } else {
             char *outf = xsprintf("%s/%s.stdout", TMP, name);
             char *runp = args_s ? xsprintf("%s %s", exe, args_s) : xstrdup(exe);
-            char *rcmd = out_s ? xsprintf("%s > %s", runp, outf) : runp;
+            if (stdin_s) {
+                char *inf = xsprintf("%s/%s.stdin", TMP, name);
+                FILE *sf = fopen(inf, "wb");
+                if (sf) {
+                    for (const char *q = stdin_s; *q; q++) {
+                        if (q[0] == '\\' && (q[1] == 'n' || q[1] == 'r')) {
+                            fputc(q[1] == 'n' ? '\n' : '\r', sf);
+                            q++;
+                        } else {
+                            fputc(*q, sf);
+                        }
+                    }
+                    fclose(sf);
+                }
+                runp = xsprintf("%s < %s", runp, inf);
+            }
+            char *rcmd = out_s ? xsprintf("%s > %s 2>&1", runp, outf) : runp;
             int rc = run_cmd(rcmd);
             int want = atoi(exit_s);
             if (rc == want && out_s && !file_contains(outf, out_s)) {

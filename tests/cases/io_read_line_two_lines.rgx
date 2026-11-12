@@ -1,0 +1,11 @@
+// expect-exit: 32
+// stdin: ab\ncde
+import std::io;
+
+fn main() -> reg i32 {
+    stack buf: [u8; 16] = [0; 16]
+    reg a: i32 = std::io::read_line(&mut buf)
+    reg b: i32 = std::io::read_line(&mut buf)
+    reg c: i32 = std::io::read_line(&mut buf)
+    return(a + b * 10 + (c + 1) * 100)
+}

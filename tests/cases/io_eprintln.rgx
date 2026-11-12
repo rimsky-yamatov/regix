@@ -1,0 +1,7 @@
+// expect-exit: 0
+// expect-stdout: to stderr
+import std::io;
+
+fn main() -> void {
+    std::io::eprintln("to stderr")
+}

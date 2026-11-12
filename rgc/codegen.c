@@ -1465,10 +1465,13 @@ static void gen_print_runtime(void)
     fputc('\n', out);
 }
 
-/* std::io::print / println: write a [u8] slice (pointer, length) to stdout. */
-static void gen_write_runtime(int newline)
+/* std::io::print / println / eprint / eprintln: write a [u8] slice (pointer,
+ * length) to stdout (fd 1) or stderr (fd 2). */
+static void gen_write_runtime(int newline, int to_err)
 {
-    const char *name = newline ? "rgx_std_io_println" : "rgx_std_io_print";
+    const char *name = to_err ? (newline ? "rgx_std_io_eprintln" : "rgx_std_io_eprint")
+                              : (newline ? "rgx_std_io_println" : "rgx_std_io_print");
+    int fd = to_err ? 2 : 1;
     if (abi->windows)
         fprintf(out, "%s PROC\n", name);
     else
@@ -1479,14 +1482,14 @@ static void gen_write_runtime(int newline)
         emit("sub rsp, 16");
         emit("mov rdx, rsi");
         emit("mov rsi, rdi");
-        emit("mov edi, 1");
+        emit("mov edi, %d", fd);
         emit("mov eax, 1");
         emit("syscall");
         if (newline) {
             emit("mov BYTE PTR [rbp-1], 10");
             emit("lea rsi, [rbp-1]");
             emit("mov edx, 1");
-            emit("mov edi, 1");
+            emit("mov edi, %d", fd);
             emit("mov eax, 1");
             emit("syscall");
         }
@@ -1494,7 +1497,7 @@ static void gen_write_runtime(int newline)
         emit("sub rsp, 80");
         emit("mov QWORD PTR [rbp-8], rcx");
         emit("mov QWORD PTR [rbp-16], rdx");
-        emit("mov ecx, -11");      /* STD_OUTPUT_HANDLE */
+        emit("mov ecx, %d", to_err ? -12 : -11);   /* STD_ERROR_HANDLE / STD_OUTPUT_HANDLE */
         emit("call GetStdHandle");
         emit("mov QWORD PTR [rbp-40], rax");
         emit("mov rcx, rax");
@@ -1519,6 +1522,117 @@ static void gen_write_runtime(int newline)
     if (abi->windows)
         fprintf(out, "%s ENDP\n", name);
     fputc('\n', out);
+}
+
+/* std::io::read_line(&mut [u8]) -> i32: reads one line from stdin into the
+ * buffer without the line break (CR is ignored; characters beyond the buffer
+ * are dropped). Returns the number of bytes stored, or -1 at end of input. */
+static void gen_read_line_runtime(void)
+{
+    int l_loop = label_seq++, l_eof = label_seq++, l_done = label_seq++, l_ret = label_seq++;
+    if (!abi->windows) {
+        fputs("rgx_std_io_read_line:\n", out);
+        emit("push rbp");
+        emit("mov rbp, rsp");
+        emit("sub rsp, 16");
+        emit("mov r8, rdi");               /* buffer */
+        emit("mov r9, rsi");               /* capacity */
+        emit("xor r10d, r10d");            /* bytes stored */
+        label_def(l_loop);
+        emit("xor eax, eax");              /* read(0, &c, 1) */
+        emit("xor edi, edi");
+        emit("lea rsi, [rbp-1]");
+        emit("mov edx, 1");
+        emit("syscall");
+        emit("cmp rax, 1");
+        emit_jump("jne", l_eof);
+        emit("mov al, BYTE PTR [rbp-1]");
+        emit("cmp al, 10");
+        emit_jump("je", l_done);
+        emit("cmp al, 13");
+        emit_jump("je", l_loop);
+        emit("cmp r10, r9");
+        emit_jump("jae", l_loop);
+        emit("mov BYTE PTR [r8+r10], al");
+        emit("inc r10");
+        emit_jump("jmp", l_loop);
+        label_def(l_eof);
+        emit("test r10, r10");
+        emit_jump("jnz", l_done);
+        emit("mov eax, -1");
+        emit_jump("jmp", l_ret);
+        label_def(l_done);
+        emit("mov eax, r10d");
+        label_def(l_ret);
+        emit("mov rsp, rbp");
+        emit("pop rbp");
+        emit("ret");
+        fputc('\n', out);
+    } else {
+        fputs("rgx_std_io_read_line PROC\n", out);
+        emit("push rbp");
+        emit("mov rbp, rsp");
+        emit("sub rsp, 96");
+        emit("mov QWORD PTR [rbp-8], rcx");     /* buffer */
+        emit("mov QWORD PTR [rbp-16], rdx");    /* capacity */
+        emit("mov QWORD PTR [rbp-24], 0");      /* bytes stored */
+        emit("mov ecx, -10");                   /* STD_INPUT_HANDLE */
+        emit("call GetStdHandle");
+        emit("mov QWORD PTR [rbp-32], rax");
+        label_def(l_loop);
+        emit("mov rcx, QWORD PTR [rbp-32]");
+        emit("lea rdx, [rbp-40]");
+        emit("mov r8d, 1");
+        emit("lea r9, [rbp-48]");
+        emit("mov QWORD PTR [rsp+32], 0");
+        emit("call ReadFile");
+        emit("test eax, eax");
+        emit_jump("jz", l_eof);
+        emit("cmp DWORD PTR [rbp-48], 1");
+        emit_jump("jne", l_eof);
+        emit("mov al, BYTE PTR [rbp-40]");
+        emit("cmp al, 10");
+        emit_jump("je", l_done);
+        emit("cmp al, 13");
+        emit_jump("je", l_loop);
+        emit("mov r10, QWORD PTR [rbp-24]");
+        emit("cmp r10, QWORD PTR [rbp-16]");
+        emit_jump("jae", l_loop);
+        emit("mov r11, QWORD PTR [rbp-8]");
+        emit("mov BYTE PTR [r11+r10], al");
+        emit("inc r10");
+        emit("mov QWORD PTR [rbp-24], r10");
+        emit_jump("jmp", l_loop);
+        label_def(l_eof);
+        emit("cmp QWORD PTR [rbp-24], 0");
+        emit_jump("jne", l_done);
+        emit("mov eax, -1");
+        emit_jump("jmp", l_ret);
+        label_def(l_done);
+        emit("mov eax, DWORD PTR [rbp-24]");
+        label_def(l_ret);
+        emit("mov rsp, rbp");
+        emit("pop rbp");
+        emit("ret");
+        fputs("rgx_std_io_read_line ENDP\n\n", out);
+    }
+}
+
+/* std::process::exit(code): ends the program with the given exit code. */
+static void gen_exit_runtime(void)
+{
+    if (!abi->windows) {
+        fputs("rgx_std_process_exit:\n", out);
+        emit("mov eax, 60");
+        emit("syscall");
+        fputc('\n', out);
+    } else {
+        fputs("rgx_std_process_exit PROC\n", out);
+        emit("and rsp, -16");
+        emit("sub rsp, 32");
+        emit("call ExitProcess");
+        fputs("rgx_std_process_exit ENDP\n\n", out);
+    }
 }
 
 /* ---- process entry ---- */
@@ -1715,9 +1829,14 @@ void codegen_program(Program *prog, const Abi *a, FILE *o)
             fputs("EXTRN HeapAlloc:PROC\n", out);
             fputs("EXTRN HeapFree:PROC\n", out);
         }
-        if (prog->uses_print || prog->uses_write || prog->uses_writeln) {
+        if (prog->builtins_used & ((1u << B_PRINT_I32) | (1u << B_PRINT) | (1u << B_PRINTLN) |
+                                    (1u << B_EPRINT) | (1u << B_EPRINTLN))) {
             fputs("EXTRN GetStdHandle:PROC\n", out);
             fputs("EXTRN WriteFile:PROC\n", out);
+        }
+        if (prog->builtins_used & (1u << B_READ_LINE)) {
+            fputs("EXTRN GetStdHandle:PROC\n", out);
+            fputs("EXTRN ReadFile:PROC\n", out);
         }
         if (main_fn && main_fn->nparams == 1)
             fputs("EXTRN GetCommandLineA:PROC\n", out);
@@ -1745,12 +1864,20 @@ void codegen_program(Program *prog, const Abi *a, FILE *o)
             gen_free_routine(prog->structs[i]);
     if (prog->uses_panic)
         gen_panic_runtime();
-    if (prog->uses_print)
+    if (prog->builtins_used & (1u << B_PRINT_I32))
         gen_print_runtime();
-    if (prog->uses_write)
-        gen_write_runtime(0);
-    if (prog->uses_writeln)
-        gen_write_runtime(1);
+    if (prog->builtins_used & (1u << B_PRINT))
+        gen_write_runtime(0, 0);
+    if (prog->builtins_used & (1u << B_PRINTLN))
+        gen_write_runtime(1, 0);
+    if (prog->builtins_used & (1u << B_EPRINT))
+        gen_write_runtime(0, 1);
+    if (prog->builtins_used & (1u << B_EPRINTLN))
+        gen_write_runtime(1, 1);
+    if (prog->builtins_used & (1u << B_READ_LINE))
+        gen_read_line_runtime();
+    if (prog->builtins_used & (1u << B_EXIT))
+        gen_exit_runtime();
     if (main_fn)
         gen_entry(main_fn);
 

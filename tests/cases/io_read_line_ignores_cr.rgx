@@ -1,0 +1,8 @@
+// expect-exit: 2
+// stdin: ab\r\ncd
+import std::io;
+
+fn main() -> reg i32 {
+    stack buf: [u8; 8] = [0; 8]
+    return(std::io::read_line(&mut buf))
+}

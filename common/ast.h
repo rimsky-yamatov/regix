@@ -16,6 +16,9 @@ typedef enum { E_INT, E_VAR, E_NEG, E_BIN, E_CALL, E_FIELD, E_STRUCTLIT,
     E_STR, E_ARRAYLIT, E_ARRAYREP, E_INDEX, E_ADDR, E_LEN, E_DEREF,
     E_NULL, E_ISNULL, E_AND, E_OR, E_NOT
 } ExprKind;
+/* Builtins implemented in assembly by the runtime. */
+enum { B_PRINT_I32, B_PRINT, B_PRINTLN, B_EPRINT, B_EPRINTLN, B_READ_LINE, B_EXIT, N_BUILTINS };
+
 enum { CP_NONE, CP_COPY, CP_MOVE };
 enum { PK_NONE, PK_NULL, PK_MOVE, PK_CALL, PK_TAKE, PK_LIT };
 
@@ -174,9 +177,7 @@ struct Program {
     Program **units;  /* master program only: the linked source files */
     int nunits;
     int uses_heap;   /* set by check: emit the heap runtime */
-    int uses_print;  /* set by check: emit std::io::print_i32 */
-    int uses_write;  /* set by check: emit std::io::print */
-    int uses_writeln; /* set by check: emit std::io::println */
+    unsigned builtins_used;  /* set by check: bit B_x for each builtin that is called */
     int uses_panic;  /* set by check: emit the bounds-check failure handler */
     StrLit *strs;    /* string literals passed as slices */
     int nstrs, strcap;

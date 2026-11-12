@@ -40,8 +40,8 @@ typedef struct {
 
 #define HEAP_MAX_BYTES 4096
 
-enum { B_PRINT_I32, B_PRINT, B_PRINTLN, N_BUILTINS };
 static Func builtins[N_BUILTINS];
+static const char *builtin_module[N_BUILTINS];
 
 static int esz(Ty e) { return e == TY_I32 ? 4 : (e == TY_U8 ? 1 : 16); }
 
@@ -238,27 +238,28 @@ static Func *find_func(Ctx *c, Expr *e)
     for (int i = 0; i < N_BUILTINS; i++) {
         if (strcmp(e->name, builtins[i].qname) != 0)
             continue;
-        if (!imported(c->unit, "std::io"))
-            err(c, e->line, e->col, "'std::io' is not imported (add 'import std::io;')");
-        if (i == B_PRINT_I32)
-            p->uses_print = 1;
-        else if (i == B_PRINT)
-            p->uses_write = 1;
-        else
-            p->uses_writeln = 1;
+        if (!imported(c->unit, builtin_module[i]))
+            err(c, e->line, e->col, "'%s' is not imported (add 'import %s;')", builtin_module[i],
+                builtin_module[i]);
+        p->builtins_used |= 1u << i;
         return &builtins[i];
     }
     return NULL;
 }
 
-static void init_builtin(int i, const char *name, Ty pty)
+/* A builtin in module `module` (e.g. "io" for std::io) taking one parameter.
+ * `rmut` makes a slice parameter &mut [u8]; `ret_i32` gives it a reg i32 result. */
+static void init_builtin(int i, const char *module, const char *name, Ty pty, int rmut,
+                         int ret_i32)
 {
     Func *f = &builtins[i];
     memset(f, 0, sizeof *f);
+    builtin_module[i] = xsprintf("std::%s", module);
     f->name = (char *)name;
-    f->qname = xsprintf("std::io::%s", name);
-    f->sym = xsprintf("rgx_std_io_%s", name);
-    f->ret_ty = TY_VOID;
+    f->qname = xsprintf("std::%s::%s", module, name);
+    f->sym = xsprintf("rgx_std_%s_%s", module, name);
+    f->ret_ty = ret_i32 ? TY_I32 : TY_VOID;
+    f->ret_storage = ret_i32 ? ST_REG : ST_NONE;
     f->nparams = 1;
     f->params = xcalloc(sizeof(Param));
     f->params[0].name = "s";
@@ -266,6 +267,7 @@ static void init_builtin(int i, const char *name, Ty pty)
     if (pty == TY_SLICE) {
         f->params[0].storage = ST_STACK;
         f->params[0].arr.elem = TY_U8;
+        f->params[0].arr.rmut = rmut;
     } else {
         f->params[0].storage = ST_REG;
     }
@@ -1830,9 +1832,13 @@ int check_program(Program *prog, const Abi *abi, int require_main)
     c.file = c.unit->file;
     int before = rgx_nerrors;
 
-    init_builtin(B_PRINT_I32, "print_i32", TY_I32);
-    init_builtin(B_PRINT, "print", TY_SLICE);
-    init_builtin(B_PRINTLN, "println", TY_SLICE);
+    init_builtin(B_PRINT_I32, "io", "print_i32", TY_I32, 0, 0);
+    init_builtin(B_PRINT, "io", "print", TY_SLICE, 0, 0);
+    init_builtin(B_PRINTLN, "io", "println", TY_SLICE, 0, 0);
+    init_builtin(B_EPRINT, "io", "eprint", TY_SLICE, 0, 0);
+    init_builtin(B_EPRINTLN, "io", "eprintln", TY_SLICE, 0, 0);
+    init_builtin(B_READ_LINE, "io", "read_line", TY_SLICE, 1, 1);
+    init_builtin(B_EXIT, "process", "exit", TY_I32, 0, 0);
 
     /* imports must name a package that exists (or the standard module) */
     for (int u = 0; u < prog->nunits; u++) {
@@ -1841,7 +1847,9 @@ int check_program(Program *prog, const Abi *abi, int require_main)
         c.file = un->file;
         for (int i = 0; i < un->nimports; i++) {
             const char *im = un->imports[i];
-            int found = strcmp(im, "std::io") == 0;
+            int found = 0;
+            for (int b = 0; b < N_BUILTINS && !found; b++)
+                found = strcmp(im, builtin_module[b]) == 0;
             for (int k = 0; k < prog->nunits && !found; k++)
                 found = prog->units[k]->package && strcmp(prog->units[k]->package, im) == 0;
             if (!found)

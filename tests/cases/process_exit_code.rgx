@@ -1,0 +1,11 @@
+// expect-exit: 7
+// expect-stdout: before
+import std::io;
+import std::process;
+
+fn main() -> reg i32 {
+    std::io::println("before")
+    std::process::exit(7)
+    std::io::println("after")
+    return(0)
+}
