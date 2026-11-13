@@ -1,0 +1,19 @@
+// expect-exit: 0
+import std::math;
+
+fn main() -> reg i32 {
+    reg bad: i32 = 0
+    if (std::math::gcd(12, 18) != 6) { bad = bad + 1 }
+    if (std::math::gcd(0 - 12, 18) != 6) { bad = bad + 1 }
+    if (std::math::gcd(7, 13) != 1) { bad = bad + 1 }
+    if (std::math::gcd(0, 5) != 5) { bad = bad + 1 }
+    if (std::math::gcd(0, 0) != 0) { bad = bad + 1 }
+    if (std::math::isqrt(0) != 0) { bad = bad + 1 }
+    if (std::math::isqrt(1) != 1) { bad = bad + 1 }
+    if (std::math::isqrt(15) != 3) { bad = bad + 1 }
+    if (std::math::isqrt(16) != 4) { bad = bad + 1 }
+    if (std::math::isqrt(99) != 9) { bad = bad + 1 }
+    if (std::math::isqrt(2147483647) != 46340) { bad = bad + 1 }
+    if (std::math::isqrt(0 - 4) != 0) { bad = bad + 1 }
+    return(bad)
+}
