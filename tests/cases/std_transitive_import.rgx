@@ -1,0 +1,9 @@
+// expect-exit: 0
+// std::num imports std::str itself; the program only imports std::num.
+import std::num;
+
+fn main() -> reg i32 {
+    stack out: i32 = 0
+    if (std::num::parse_i32("42", &mut out) != 1) { return(1) }
+    return(out - 42)
+}
