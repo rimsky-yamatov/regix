@@ -1,0 +1,4 @@
+// expect-error: (is 'import std::math;' missing?)
+fn main() -> reg i32 {
+    return(std::math::abs(1))
+}
