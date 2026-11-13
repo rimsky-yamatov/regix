@@ -1,0 +1,24 @@
+// expect-exit: 0
+import std::str;
+
+fn main() -> reg i32 {
+    reg bad: i32 = 0
+    if (std::str::is_digit(48) != 1 || std::str::is_digit(57) != 1) { bad = bad + 1 }
+    if (std::str::is_digit(47) != 0 || std::str::is_digit(58) != 0) { bad = bad + 1 }
+    if (std::str::is_upper(65) != 1 || std::str::is_upper(97) != 0) { bad = bad + 1 }
+    if (std::str::is_lower(97) != 1 || std::str::is_lower(65) != 0) { bad = bad + 1 }
+    if (std::str::is_alpha(90) != 1 || std::str::is_alpha(48) != 0) { bad = bad + 1 }
+    if (std::str::is_alnum(48) != 1 || std::str::is_alnum(32) != 0) { bad = bad + 1 }
+    if (std::str::is_space(32) != 1 || std::str::is_space(10) != 1) { bad = bad + 1 }
+    if (std::str::is_space(9) != 1 || std::str::is_space(13) != 1) { bad = bad + 1 }
+    if (std::str::is_space(97) != 0) { bad = bad + 1 }
+    if (std::str::to_upper(97) != 65 || std::str::to_upper(65) != 65) { bad = bad + 1 }
+    if (std::str::to_upper(48) != 48) { bad = bad + 1 }
+    if (std::str::to_lower(65) != 97 || std::str::to_lower(97) != 97) { bad = bad + 1 }
+    stack buf: [u8; 5] = [0; 5]
+    if (std::str::to_upper_into(&mut buf, "hello") != 5) { bad = bad + 1 }
+    if (std::str::eq(buf, "HELLO") != 1) { bad = bad + 1 }
+    if (std::str::to_lower_into(&mut buf, "WoRlD") != 5) { bad = bad + 1 }
+    if (std::str::eq(buf, "world") != 1) { bad = bad + 1 }
+    return(bad)
+}
