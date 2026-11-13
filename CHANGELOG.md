@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Standard library: `std::io` (`eprint`, `eprintln`, `read_line` added), `std::process`
+  (`exit`), and the Regix-source modules `std::math`, `std::str`, `std::num`,
+  `std::list`, loaded by `rgc` on import (see `docs/stdlib.md`).
+- Operators `/`, `%`, `&&`, `||`, `!` (division by zero exits with code 101).
+- `&mut [T]` slices; struct types shared across packages (`pub struct`,
+  `pkg::Name`).
+- Tests: runner supports `// stdin:`; 351 cases.
 - Struct `heap` fields (owned, nullable pointers) and `null`: lists and trees,
   `take(x.f)`, assignment into heap fields, reassigning `heap` struct
   variables, struct literals and call results as heap values, recursive release

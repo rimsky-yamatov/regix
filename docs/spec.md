@@ -104,8 +104,9 @@ tabs with double quotes grouping; there are no backslash rules, and at most
 * Names in the current package resolve without a prefix, even across files.
   A function in another package is called with its full name,
   `a::b::f(1)`, and needs `import a::b;` plus `pub fn f`.
-* Structs are visible inside their own package only (cross-package struct
-  types are not implemented yet).
+* A struct is used by its plain name inside its own package. From another
+  package it needs `pub struct`, the import, and its full name: `geo::Point`
+  as a type and in literals (`geo::Point { x: 1, y: 2 }`).
 * Exactly one `main` must exist. Two functions with the same name are fine in
   different packages.
 * `rgpm build` compiles every `.rgx` under `src/`. The directory must match
@@ -235,26 +236,54 @@ largest heap value is 4096 bytes.
 * References still cannot be returned or stored in structs, so they cannot
   outlive what they borrow.
 
+## Operators
+
+From loosest to tightest: `||`, `&&`, comparisons (`== != < > <= >=`), `+ -`,
+`* / %`, unary `- ! *` (the last one dereferences a reference).
+
+* `&&` and `||` short-circuit and yield 0 or 1. `!x` is 1 when `x` is 0.
+* `/` truncates toward zero and `%` takes the sign of the dividend. Dividing
+  by zero stops the program with exit code 101 (a constant zero divisor is a
+  compile error). `INT_MIN / -1` wraps instead of trapping.
+* There are no bitwise operators yet.
+
+## Writable slices
+
+A parameter `stack buf: &mut [T]` is a borrowed view that can be written:
+`buf[i] = v`. Pass `&mut a` (an array) or another `&mut [T]`; a shared `&[T]`
+cannot be passed on as `&mut`. The same aliasing rule as for `&mut x` applies:
+the array cannot be used elsewhere in that call.
+
+## Standard library
+
+`std::io` and `std::process` are built into the runtime; `std::math`,
+`std::str`, `std::num` and `std::list` are Regix sources in `std/` that `rgc`
+compiles together with the program when they are imported. See
+[stdlib.md](stdlib.md).
+
 ## Implementation status (unreleased, after v0.1.0)
 
 Implemented:
 
 * Types: `i32`, structs (inline fields and owned `heap` fields), arrays
-  `[i32; N]` / `[u8; N]`, slice and reference parameters, reference variables,
-  string literals.
+  `[i32; N]` / `[u8; N]`, slice (`&[T]`, `&mut [T]`) and reference parameters,
+  reference variables, string literals.
 * Variables: `reg`, `stack`, `heap`, optional `secret`; `if`/`else`, `while`,
-  assignment, calls, guaranteed tail calls.
+  assignment, calls, guaranteed tail calls, the operators above.
 * `drop`, `copy`, `take`, moves, `null`, ownership transfer through `heap`
   parameters, returns and fields, compile-time use-after-drop/move checks.
 * Borrowed references with aliasing checks and lexical borrow locks.
-* Multi-file packages with `import` and `pub`; `rgpm init/build/run`.
-* `std::io::print_i32`, `print`, `println`; `main` arguments.
+* Multi-file packages with `import` and `pub` (functions and structs);
+  `rgpm init/build/run`.
+* Standard library: `std::io`, `std::process`, `std::math`, `std::str`,
+  `std::num`, `std::list`; `main` arguments.
 
 Known limits (planned, not implemented):
 
+* No growable string or vector (arrays have a fixed size, heap blocks are at
+  most 4096 bytes); no sub-slices; no generics, so containers are per type.
+* No bitwise operators, no `break`/`continue`, no `for`.
 * Deep copy of structs with heap fields; whole-value assignment `a = b`;
-  passing structs or arrays by value; arrays inside structs; `&mut [T]`; slice
-  variables; references to array elements.
-* A `heap` field must hold a struct (not `i32` or an array).
-* Cross-package structs; the rest of the standard library.
+  passing structs or arrays by value; arrays inside structs; references to
+  array elements; a `heap` field must hold a struct.
 * A `reg` struct or array is rejected.

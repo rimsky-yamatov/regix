@@ -1,0 +1,34 @@
+import std::io;
+import std::math;
+import std::num;
+import std::str;
+import std::list;
+
+fn main() -> reg i32 {
+    // math
+    std::io::print_i32(std::math::pow(2, 10))        // 1024
+    std::io::print_i32(std::math::gcd(84, 36))       // 12
+
+    // text -> number -> text
+    stack n: i32 = 0
+    if (std::num::parse_i32("-250", &mut n)) {
+        stack buf: [u8; 11] = [0; 11]
+        reg len: i32 = std::num::format_i32(n * 2, &mut buf)
+        std::io::print_i32(len)                       // 4  ("-500")
+    }
+
+    // searching
+    std::io::print_i32(std::str::find("hello world", "world"))   // 6
+
+    // a list
+    heap l: std::list::Node = std::list::empty()
+    reg i: i32 = 1
+    while (i <= 4) {
+        l = std::list::push(l, i * i)
+        i = i + 1
+    }
+    std::io::print_i32(std::list::sum(&l))            // 30
+    l = std::list::reverse(l)
+    std::io::print_i32(std::list::get(&l, 0))         // 1
+    return(0)
+}
