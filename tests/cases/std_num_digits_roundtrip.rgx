@@ -1,0 +1,23 @@
+// expect-exit: 0
+// digits() and a format -> parse round trip using arrays of exactly the right length.
+import std::num;
+
+fn main() -> reg i32 {
+    reg bad: i32 = 0
+    if (std::num::digits(0) != 1) { bad = bad + 1 }
+    if (std::num::digits(9) != 1) { bad = bad + 1 }
+    if (std::num::digits(10) != 2) { bad = bad + 1 }
+    if (std::num::digits(0 - 12345) != 5) { bad = bad + 1 }
+    if (std::num::digits(2147483647) != 10) { bad = bad + 1 }
+    stack out: i32 = 0
+    stack a: [u8; 1] = [0]
+    if (std::num::format_i32(7, &mut a) != 1) { bad = bad + 1 }
+    if (std::num::parse_i32(a, &mut out) != 1 || out != 7) { bad = bad + 1 }
+    stack b: [u8; 4] = [0; 4]
+    if (std::num::format_i32(0 - 305, &mut b) != 4) { bad = bad + 1 }
+    if (std::num::parse_i32(b, &mut out) != 1 || out != 0 - 305) { bad = bad + 1 }
+    stack c: [u8; 10] = [0; 10]
+    if (std::num::format_i32(2147483647, &mut c) != 10) { bad = bad + 1 }
+    if (std::num::parse_i32(c, &mut out) != 1 || out != 2147483647) { bad = bad + 1 }
+    return(bad)
+}
