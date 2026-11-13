@@ -1,0 +1,6 @@
+// expect-error: undefined function 'abs'
+import std::math;
+
+fn main() -> reg i32 {
+    return(abs(1))
+}
