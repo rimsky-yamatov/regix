@@ -1,0 +1,16 @@
+// expect-exit: 0
+import std::math;
+
+fn main() -> reg i32 {
+    reg bad: i32 = 0
+    if (std::math::pow(3, 4) != 81) { bad = bad + 1 }
+    if (std::math::pow(2, 0) != 1) { bad = bad + 1 }
+    if (std::math::pow(2, 10) != 1024) { bad = bad + 1 }
+    if (std::math::pow(0 - 2, 3) != 0 - 8) { bad = bad + 1 }
+    if (std::math::pow(5, 0 - 1) != 0) { bad = bad + 1 }
+    if (std::math::pow(10, 9) != 1000000000) { bad = bad + 1 }
+    if (std::math::factorial(0) != 1) { bad = bad + 1 }
+    if (std::math::factorial(5) != 120) { bad = bad + 1 }
+    if (std::math::factorial(12) != 479001600) { bad = bad + 1 }
+    return(bad)
+}
