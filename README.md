@@ -43,9 +43,19 @@ Windows (Visual Studio with the C++ tools, from an x64 developer prompt):
 
     rgc main.rgx src/a/b/x.rgx -o app     # several files; package a::b in x.rgx
 
-More programs are in `examples/` (`hello`, `args`, `sum`, `struct`, `heap`).
+More programs are in `examples/` (`hello`, `args`, `sum`, `struct`, `heap`, `refs`, `list`, `stdlib`).
 
     rgc examples/fact.rgx --target windows-x64 -S -o fact.asm   # MASM text only
+
+## Standard library
+
+`import std::math;` (also `std::str`, `std::num`, `std::list`, `std::io`,
+`std::process`) and call functions by their full name:
+
+    std::io::print_i32(std::math::pow(2, 10))
+
+The source modules live in `std/`; `rgc` finds that folder next to the
+compiler (or via `RGX_STD`). Reference: [docs/stdlib.md](docs/stdlib.md).
 
 ## Tests
 

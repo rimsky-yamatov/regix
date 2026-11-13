@@ -23,7 +23,7 @@ jobs:
           name="regix-${GITHUB_REF_NAME}-linux-x64"
           mkdir -p "dist/$name"
           cp build/rgc build/rgfmt build/rgpm README.md "dist/$name/"
-          cp -r docs "dist/$name/docs"
+          cp -r docs std "dist/$name/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
       - uses: actions/upload-artifact@v4
         with:
@@ -50,7 +50,7 @@ jobs:
           $name = "regix-$env:GITHUB_REF_NAME-windows-x64"
           New-Item -ItemType Directory -Path "dist/$name" -Force | Out-Null
           Copy-Item build/rgc.exe, build/rgfmt.exe, build/rgpm.exe, README.md "dist/$name/"
-          Copy-Item docs "dist/$name/docs" -Recurse
+          Copy-Item docs, std "dist/$name/" -Recurse
           Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
       - uses: actions/upload-artifact@v4
         with:
