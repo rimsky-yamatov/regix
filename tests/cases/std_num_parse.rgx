@@ -1,0 +1,26 @@
+// expect-exit: 0
+import std::num;
+
+fn main() -> reg i32 {
+    reg bad: i32 = 0
+    stack out: i32 = 7
+    if (std::num::parse_i32("1234", &mut out) != 1 || out != 1234) { bad = bad + 1 }
+    if (std::num::parse_i32("-56", &mut out) != 1 || out != 0 - 56) { bad = bad + 1 }
+    if (std::num::parse_i32("+8", &mut out) != 1 || out != 8) { bad = bad + 1 }
+    if (std::num::parse_i32("0", &mut out) != 1 || out != 0) { bad = bad + 1 }
+    if (std::num::parse_i32("007", &mut out) != 1 || out != 7) { bad = bad + 1 }
+    if (std::num::parse_i32("2147483647", &mut out) != 1 || out != 2147483647) { bad = bad + 1 }
+    if (std::num::parse_i32("-2147483647", &mut out) != 1 || out != 0 - 2147483647) { bad = bad + 1 }
+    out = 99
+    if (std::num::parse_i32("", &mut out) != 0) { bad = bad + 1 }
+    if (std::num::parse_i32("-", &mut out) != 0) { bad = bad + 1 }
+    if (std::num::parse_i32("+", &mut out) != 0) { bad = bad + 1 }
+    if (std::num::parse_i32("12a", &mut out) != 0) { bad = bad + 1 }
+    if (std::num::parse_i32("a12", &mut out) != 0) { bad = bad + 1 }
+    if (std::num::parse_i32(" 1", &mut out) != 0) { bad = bad + 1 }
+    if (std::num::parse_i32("1.5", &mut out) != 0) { bad = bad + 1 }
+    if (std::num::parse_i32("2147483648", &mut out) != 0) { bad = bad + 1 }
+    if (std::num::parse_i32("99999999999", &mut out) != 0) { bad = bad + 1 }
+    if (out != 99) { bad = bad + 1 }
+    return(bad)
+}
