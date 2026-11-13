@@ -1,0 +1,6 @@
+// expect-error: standard library module 'std::nothing' not found
+import std::nothing;
+
+fn main() -> reg i32 {
+    return(0)
+}
