@@ -1162,7 +1162,14 @@ static Ty check_expr(Ctx *c, Expr *e, int allow_void)
             return TY_I32;
         }
         if (!f) {
-            err(c, e->line, e->col, "undefined function '%s'", e->name);
+            const char *last = strrchr(e->name, ':');
+            if (last && last > e->name && last[-1] == ':') {
+                char *pkg = xstrndup(e->name, (size_t)(last - 1 - e->name));
+                err(c, e->line, e->col, "undefined function '%s' (is 'import %s;' missing?)",
+                    e->name, pkg);
+            } else {
+                err(c, e->line, e->col, "undefined function '%s'", e->name);
+            }
             return TY_I32;
         }
         e->callee = f;
