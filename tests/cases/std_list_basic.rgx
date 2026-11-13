@@ -1,0 +1,16 @@
+// expect-exit: 0
+import std::list;
+
+fn main() -> reg i32 {
+    reg bad: i32 = 0
+    heap l: std::list::Node = std::list::empty()
+    if (l != null) { bad = bad + 1 }
+    l = std::list::push(l, 10)
+    l = std::list::push(l, 20)
+    l = std::list::push(l, 30)
+    if (std::list::length(&l) != 3) { bad = bad + 1 }
+    if (std::list::sum(&l) != 60) { bad = bad + 1 }
+    if (std::list::get(&l, 0) != 30) { bad = bad + 1 }
+    if (std::list::get(&l, 2) != 10) { bad = bad + 1 }
+    return(bad)
+}
