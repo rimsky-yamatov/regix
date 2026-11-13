@@ -1,0 +1,7 @@
+// expect-exit: 6
+import std::list;
+
+fn main() -> reg i32 {
+    heap l: std::list::Node = std::list::Node { value: 1, next: std::list::Node { value: 5, next: null } }
+    return(std::list::sum(&l))
+}
