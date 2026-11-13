@@ -1,0 +1,20 @@
+// expect-exit: 0
+import std::str;
+
+fn main() -> reg i32 {
+    reg bad: i32 = 0
+    if (std::str::len("hello") != 5) { bad = bad + 1 }
+    if (std::str::len("") != 0) { bad = bad + 1 }
+    if (std::str::eq("abc", "abc") != 1) { bad = bad + 1 }
+    if (std::str::eq("abc", "abd") != 0) { bad = bad + 1 }
+    if (std::str::eq("abc", "ab") != 0) { bad = bad + 1 }
+    if (std::str::eq("", "") != 1) { bad = bad + 1 }
+    if (std::str::starts_with("hello", "he") != 1) { bad = bad + 1 }
+    if (std::str::starts_with("hello", "hello!") != 0) { bad = bad + 1 }
+    if (std::str::starts_with("hello", "") != 1) { bad = bad + 1 }
+    if (std::str::starts_with("hello", "el") != 0) { bad = bad + 1 }
+    if (std::str::ends_with("hello", "llo") != 1) { bad = bad + 1 }
+    if (std::str::ends_with("hello", "ell") != 0) { bad = bad + 1 }
+    if (std::str::ends_with("lo", "hello") != 0) { bad = bad + 1 }
+    return(bad)
+}
