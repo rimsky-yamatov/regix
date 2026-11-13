@@ -1,0 +1,14 @@
+// expect-exit: 0
+import std::list;
+
+fn main() -> reg i32 {
+    heap l: std::list::Node = std::list::empty()
+    reg i: i32 = 0
+    while (i < 50000) {
+        l = std::list::push(l, 1)
+        i = i + 1
+    }
+    if (std::list::length(&l) != 50000) { return(1) }
+    if (std::list::sum(&l) != 50000) { return(2) }
+    return(0)
+}
