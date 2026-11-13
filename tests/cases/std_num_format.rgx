@@ -1,0 +1,23 @@
+// expect-exit: 0
+import std::num;
+import std::str;
+
+fn main() -> reg i32 {
+    reg bad: i32 = 0
+    stack buf: [u8; 16] = [0; 16]
+    reg n: i32 = std::num::format_i32(305, &mut buf)
+    if (n != 3 || buf[0] != 51 || buf[1] != 48 || buf[2] != 53) { bad = bad + 1 }
+    n = std::num::format_i32(0, &mut buf)
+    if (n != 1 || buf[0] != 48) { bad = bad + 1 }
+    n = std::num::format_i32(0 - 42, &mut buf)
+    if (n != 3 || buf[0] != 45 || buf[1] != 52 || buf[2] != 50) { bad = bad + 1 }
+    n = std::num::format_i32(2147483647, &mut buf)
+    if (n != 10 || buf[0] != 50 || buf[9] != 55) { bad = bad + 1 }
+    n = std::num::format_i32(0 - 2147483647 - 1, &mut buf)
+    if (n != 11 || buf[0] != 45 || buf[10] != 56) { bad = bad + 1 }
+    stack tiny: [u8; 2] = [0; 2]
+    if (std::num::format_i32(123, &mut tiny) != 0) { bad = bad + 1 }
+    if (std::num::format_i32(0 - 12, &mut tiny) != 0) { bad = bad + 1 }
+    if (std::num::format_i32(12, &mut tiny) != 2) { bad = bad + 1 }
+    return(bad)
+}
