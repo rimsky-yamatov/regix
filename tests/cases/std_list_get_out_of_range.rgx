@@ -1,0 +1,8 @@
+// expect-exit: 101
+import std::list;
+
+fn main() -> reg i32 {
+    heap l: std::list::Node = std::list::empty()
+    l = std::list::push(l, 1)
+    return(std::list::get(&l, 1))
+}
