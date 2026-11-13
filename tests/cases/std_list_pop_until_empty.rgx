@@ -1,0 +1,23 @@
+// expect-exit: 0
+import std::list;
+
+fn main() -> reg i32 {
+    reg bad: i32 = 0
+    heap l: std::list::Node = std::list::empty()
+    reg i: i32 = 0
+    while (i < 5) {
+        l = std::list::push(l, i)
+        i = i + 1
+    }
+    reg count: i32 = 0
+    while (l != null) {
+        l = std::list::pop(l)
+        count = count + 1
+    }
+    if (count != 5) { bad = bad + 1 }
+    l = std::list::pop(l)
+    if (l != null) { bad = bad + 1 }
+    l = std::list::reverse(l)
+    if (l != null) { bad = bad + 1 }
+    return(bad)
+}
